@@ -18,6 +18,28 @@ interface SettingsPanelProps {
   onBlockUpdate: (id: string, updates: Partial<Block>) => void;
 }
 
+// Gradient helper functions
+const getGradientColor = (value: string | null, index: number): string => {
+  if (!value) return index === 0 ? '#4f46e5' : '#7c3aed';
+  const colors = value.match(/#[0-9a-fA-F]{6}/g);
+  return colors?.[index] || (index === 0 ? '#4f46e5' : '#7c3aed');
+};
+
+const getGradientDirection = (value: string | null): string => {
+  if (!value) return 'to-bottom';
+  if (value.includes('to right')) return 'to-right';
+  if (value.includes('to left')) return 'to-left';
+  if (value.includes('to top right')) return 'to-top-right';
+  if (value.includes('to bottom right')) return 'to-bottom-right';
+  if (value.includes('to top')) return 'to-top';
+  return 'to-bottom';
+};
+
+const buildGradientValue = (direction: string, color1: string, color2: string): string => {
+  const cssDirection = direction.replace(/-/g, ' ');
+  return `linear-gradient(${cssDirection}, ${color1}, ${color2})`;
+};
+
 export function SettingsPanel({
   slide,
   selectedBlock,
@@ -38,6 +60,28 @@ export function SettingsPanel({
       width: (settings?.width as string) || '100%',
       alignment: (settings?.alignment as 'left' | 'center' | 'right') || 'center',
     };
+  };
+
+  const updateGradientColor = (index: number, color: string) => {
+    const currentColors = [
+      getGradientColor(slide.background_value, 0),
+      getGradientColor(slide.background_value, 1)
+    ];
+    currentColors[index] = color;
+    const direction = getGradientDirection(slide.background_value);
+    onSlideUpdate({ 
+      background_value: buildGradientValue(direction, currentColors[0], currentColors[1])
+    });
+  };
+
+  const updateGradientDirection = (direction: string) => {
+    const colors = [
+      getGradientColor(slide.background_value, 0),
+      getGradientColor(slide.background_value, 1)
+    ];
+    onSlideUpdate({ 
+      background_value: buildGradientValue(direction, colors[0], colors[1])
+    });
   };
 
   return (
@@ -61,7 +105,16 @@ export function SettingsPanel({
               <Label className="text-xs">Bakgrund</Label>
               <Select
                 value={slide.background_type}
-                onValueChange={(value) => onSlideUpdate({ background_type: value })}
+                onValueChange={(value) => {
+                  // Set default values when changing type
+                  let defaultValue = '';
+                  if (value === 'color') {
+                    defaultValue = '#ffffff';
+                  } else if (value === 'gradient') {
+                    defaultValue = 'linear-gradient(to bottom, #4f46e5, #7c3aed)';
+                  }
+                  onSlideUpdate({ background_type: value, background_value: defaultValue });
+                }}
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -90,6 +143,77 @@ export function SettingsPanel({
                     className="flex-1"
                   />
                 </div>
+              </div>
+            )}
+
+            {slide.background_type === 'gradient' && (
+              <div className="space-y-3">
+                <Label className="text-xs">Gradient-färger</Label>
+                
+                {/* Start color */}
+                <div className="space-y-1">
+                  <span className="text-xs text-muted-foreground">Startfärg</span>
+                  <div className="flex gap-2">
+                    <Input
+                      type="color"
+                      value={getGradientColor(slide.background_value, 0)}
+                      onChange={(e) => updateGradientColor(0, e.target.value)}
+                      className="w-12 h-10 p-1 cursor-pointer"
+                    />
+                    <Input
+                      value={getGradientColor(slide.background_value, 0)}
+                      onChange={(e) => updateGradientColor(0, e.target.value)}
+                      className="flex-1"
+                    />
+                  </div>
+                </div>
+
+                {/* End color */}
+                <div className="space-y-1">
+                  <span className="text-xs text-muted-foreground">Slutfärg</span>
+                  <div className="flex gap-2">
+                    <Input
+                      type="color"
+                      value={getGradientColor(slide.background_value, 1)}
+                      onChange={(e) => updateGradientColor(1, e.target.value)}
+                      className="w-12 h-10 p-1 cursor-pointer"
+                    />
+                    <Input
+                      value={getGradientColor(slide.background_value, 1)}
+                      onChange={(e) => updateGradientColor(1, e.target.value)}
+                      className="flex-1"
+                    />
+                  </div>
+                </div>
+
+                {/* Direction */}
+                <div className="space-y-1">
+                  <span className="text-xs text-muted-foreground">Riktning</span>
+                  <Select
+                    value={getGradientDirection(slide.background_value)}
+                    onValueChange={updateGradientDirection}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="to-bottom">Uppifrån och ner ↓</SelectItem>
+                      <SelectItem value="to-top">Nedifrån och upp ↑</SelectItem>
+                      <SelectItem value="to-right">Vänster till höger →</SelectItem>
+                      <SelectItem value="to-left">Höger till vänster ←</SelectItem>
+                      <SelectItem value="to-bottom-right">Diagonal ↘</SelectItem>
+                      <SelectItem value="to-top-right">Diagonal ↗</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Live preview */}
+                <div 
+                  className="h-12 rounded-md border"
+                  style={{ 
+                    background: slide.background_value || 'linear-gradient(to bottom, #4f46e5, #7c3aed)' 
+                  }}
+                />
               </div>
             )}
 
