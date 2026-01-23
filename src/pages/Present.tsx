@@ -178,10 +178,13 @@ export default function Present() {
     return {
       width: (settings?.width as string) || '100%',
       alignment: (settings?.alignment as 'left' | 'center' | 'right') || 'center',
+      imageLayout: (settings?.imageLayout as 'default' | 'full-width' | 'left-edge' | 'right-edge') || 'default',
+      parallaxSpeed: (settings?.parallaxSpeed as number) ?? 1,
+      zIndex: (settings?.zIndex as number) ?? 1,
     };
   };
 
-  const renderBlock = (block: Block) => {
+  const renderBlock = (block: Block, isEdgeLayout: boolean = false) => {
     const content = getContent(block);
     const layout = getLayoutSettings(block);
     const alignmentClass = {
@@ -215,7 +218,33 @@ export default function Present() {
         );
 
       case 'image':
-        return content.src ? (
+        if (!content.src) return null;
+        
+        const imageLayout = layout.imageLayout || 'default';
+        
+        // Edge-to-edge layouts render differently
+        if (imageLayout === 'full-width') {
+          return (
+            <img
+              src={content.src}
+              alt={content.alt || ''}
+              className="w-full h-full object-cover"
+            />
+          );
+        }
+        
+        if (imageLayout === 'left-edge' || imageLayout === 'right-edge') {
+          return (
+            <img
+              src={content.src}
+              alt={content.alt || ''}
+              className="w-full h-full object-cover"
+            />
+          );
+        }
+        
+        // Default layout
+        return (
           <div className={cn('mb-6', alignmentClass)}>
             <img
               src={content.src}
@@ -223,10 +252,34 @@ export default function Present() {
               className="max-w-full max-h-[60vh] rounded-lg mx-auto"
             />
           </div>
-        ) : null;
+        );
 
       default:
         return null;
+    }
+  };
+
+  // Check if a block should be rendered as edge-to-edge (outside the container)
+  const isEdgeLayout = (block: Block): boolean => {
+    if (block.type !== 'image') return false;
+    const layout = getLayoutSettings(block);
+    return layout.imageLayout === 'full-width' || 
+           layout.imageLayout === 'left-edge' || 
+           layout.imageLayout === 'right-edge';
+  };
+
+  // Get edge layout CSS classes
+  const getEdgeLayoutClasses = (block: Block): string => {
+    const layout = getLayoutSettings(block);
+    switch (layout.imageLayout) {
+      case 'full-width':
+        return 'absolute inset-0';
+      case 'left-edge':
+        return 'absolute left-0 top-0 bottom-0 w-1/2';
+      case 'right-edge':
+        return 'absolute right-0 top-0 bottom-0 w-1/2';
+      default:
+        return '';
     }
   };
 
@@ -294,24 +347,52 @@ export default function Present() {
       >
         {slides.map((slide, slideIndex) => {
           const slideBlocks = blocks[slide.id] || [];
+          const edgeBlocks = slideBlocks.filter(isEdgeLayout);
+          const normalBlocks = slideBlocks.filter(b => !isEdgeLayout(b));
           
           return (
             <section
               key={slide.id}
               ref={(el) => { slideRefs.current[slideIndex] = el; }}
-              className="min-h-screen snap-start snap-always flex items-center justify-center relative"
+              className="min-h-screen snap-start snap-always flex items-center justify-center relative overflow-hidden"
               style={getBackgroundStyle(slide)}
             >
-              <div className="max-w-4xl w-full px-8 py-16">
-                {slideBlocks.map((block, blockIndex) => (
-                  <AnimatedBlock
+              {/* Edge-to-edge blocks (rendered behind/beside content) */}
+              {edgeBlocks.map((block, blockIndex) => {
+                const layout = getLayoutSettings(block);
+                return (
+                  <div
                     key={block.id}
-                    animationType={block.animation_type}
-                    delay={blockIndex * 100}
+                    className={cn(getEdgeLayoutClasses(block), 'z-0')}
                   >
-                    {renderBlock(block)}
-                  </AnimatedBlock>
-                ))}
+                    <AnimatedBlock
+                      animationType={block.animation_type}
+                      delay={blockIndex * 100}
+                      parallaxSpeed={layout.parallaxSpeed}
+                      zIndex={layout.zIndex}
+                    >
+                      {renderBlock(block, true)}
+                    </AnimatedBlock>
+                  </div>
+                );
+              })}
+              
+              {/* Normal blocks (in centered container) */}
+              <div className="max-w-4xl w-full px-8 py-16 relative z-10">
+                {normalBlocks.map((block, blockIndex) => {
+                  const layout = getLayoutSettings(block);
+                  return (
+                    <AnimatedBlock
+                      key={block.id}
+                      animationType={block.animation_type}
+                      delay={blockIndex * 100}
+                      parallaxSpeed={layout.parallaxSpeed}
+                      zIndex={layout.zIndex}
+                    >
+                      {renderBlock(block)}
+                    </AnimatedBlock>
+                  );
+                })}
               </div>
             </section>
           );

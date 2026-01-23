@@ -53,6 +53,11 @@ export interface AnimationSettings {
 export interface LayoutSettings {
   width: string;
   alignment: 'left' | 'center' | 'right';
+  // Image layout for edge-to-edge options
+  imageLayout?: 'default' | 'full-width' | 'left-edge' | 'right-edge';
+  // Parallax and depth settings
+  parallaxSpeed?: number; // 0 = static, 0.5 = slow, 1 = normal
+  zIndex?: number; // Layer depth 1-5
 }
 
 export interface MediaAsset {
