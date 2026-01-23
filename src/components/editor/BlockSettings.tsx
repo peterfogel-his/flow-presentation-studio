@@ -30,7 +30,7 @@ export function BlockSettings({ block, onUpdate }: BlockSettingsProps) {
   }
 
   const animationSettings: AnimationSettings = {
-    type: 'none',
+    type: 'slide-up',
     delay: 0,
     duration: 500,
     ...((block.animation_settings as Record<string, unknown>) || {}),
@@ -175,16 +175,25 @@ export function BlockSettings({ block, onUpdate }: BlockSettingsProps) {
           </div>
 
           <div className="space-y-2">
-            <Label className="text-sm">Z-index (lager)</Label>
-            <Slider
-              value={[block.z_index]}
-              onValueChange={([value]) => onUpdate({ z_index: value })}
-              min={0}
-              max={10}
-              step={1}
-            />
+            <Label className="text-sm">Lager (djup)</Label>
+            <Select
+              value={block.z_index === 0 ? 'background' : block.z_index <= 5 ? 'middle' : 'foreground'}
+              onValueChange={(value) => {
+                const zValue = value === 'background' ? 0 : value === 'middle' ? 5 : 10;
+                onUpdate({ z_index: zValue });
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="background">Bakgrund (långsam parallax)</SelectItem>
+                <SelectItem value="middle">Mellan (medium parallax)</SelectItem>
+                <SelectItem value="foreground">Förgrund (normal hastighet)</SelectItem>
+              </SelectContent>
+            </Select>
             <p className="text-xs text-muted-foreground">
-              Högre värde = framför andra block
+              Påverkar hur snabbt blocket rör sig vid scroll
             </p>
           </div>
 

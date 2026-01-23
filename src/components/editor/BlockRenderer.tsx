@@ -84,7 +84,14 @@ function BackgroundBlock({
       <div className="flex items-center gap-2">
         <select
           value={bgType}
-          onChange={(e) => onUpdate({ type: e.target.value, value: bgValue })}
+          onChange={(e) => {
+            const newType = e.target.value;
+            // Provide sensible defaults when switching types
+            const newValue = newType === 'color' ? '#ffffff' 
+              : newType === 'gradient' ? 'linear-gradient(135deg, #667eea, #764ba2)' 
+              : '';
+            onUpdate({ type: newType, value: newValue });
+          }}
           className="text-sm border rounded px-2 py-1 bg-background"
         >
           <option value="color">Färg</option>
