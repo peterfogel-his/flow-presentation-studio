@@ -181,6 +181,7 @@ export default function Present() {
       imageLayout: (settings?.imageLayout as 'default' | 'full-width' | 'left-edge' | 'right-edge') || 'default',
       parallaxSpeed: (settings?.parallaxSpeed as number) ?? 1,
       zIndex: (settings?.zIndex as number) ?? 1,
+      showTextBackground: (settings?.showTextBackground as boolean) ?? false,
     };
   };
 
@@ -339,7 +340,7 @@ export default function Present() {
         <ChevronRight className="h-8 w-8" />
       </button>
 
-      {/* Scroll container with all slides */}
+      {/* Scroll container with stacked slides - each slide covers the previous */}
       <div 
         ref={containerRef}
         className="h-screen overflow-y-scroll snap-y snap-mandatory scrollbar-hide"
@@ -349,13 +350,20 @@ export default function Present() {
           const slideBlocks = blocks[slide.id] || [];
           const edgeBlocks = slideBlocks.filter(isEdgeLayout);
           const normalBlocks = slideBlocks.filter(b => !isEdgeLayout(b));
+          const slideKey = `${slide.id}-${currentIndex}`; // Key for animation reset
           
           return (
             <section
               key={slide.id}
               ref={(el) => { slideRefs.current[slideIndex] = el; }}
-              className="min-h-screen snap-start snap-always flex items-center justify-center relative overflow-hidden"
-              style={getBackgroundStyle(slide)}
+              className="min-h-screen h-screen snap-start snap-always flex items-center justify-center relative overflow-hidden"
+              style={{
+                ...getBackgroundStyle(slide),
+                // Stack slides so new one covers the previous (sticky positioning)
+                position: 'sticky',
+                top: 0,
+                zIndex: slideIndex,
+              }}
             >
               {/* Edge-to-edge blocks (rendered behind/beside content) */}
               {edgeBlocks.map((block, blockIndex) => {
@@ -367,9 +375,11 @@ export default function Present() {
                   >
                     <AnimatedBlock
                       animationType={block.animation_type}
-                      delay={blockIndex * 100}
+                      delay={blockIndex * 150}
                       parallaxSpeed={layout.parallaxSpeed}
                       zIndex={layout.zIndex}
+                      slideKey={slideKey}
+                      showTextBackground={layout.showTextBackground}
                     >
                       {renderBlock(block, true)}
                     </AnimatedBlock>
@@ -381,13 +391,16 @@ export default function Present() {
               <div className="max-w-4xl w-full px-8 py-16 relative z-10">
                 {normalBlocks.map((block, blockIndex) => {
                   const layout = getLayoutSettings(block);
+                  const isTextBlock = block.type === 'heading' || block.type === 'text';
                   return (
                     <AnimatedBlock
                       key={block.id}
                       animationType={block.animation_type}
-                      delay={blockIndex * 100}
+                      delay={blockIndex * 150}
                       parallaxSpeed={layout.parallaxSpeed}
                       zIndex={layout.zIndex}
+                      slideKey={slideKey}
+                      showTextBackground={isTextBlock && layout.showTextBackground}
                     >
                       {renderBlock(block)}
                     </AnimatedBlock>

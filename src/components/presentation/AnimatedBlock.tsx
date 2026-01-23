@@ -7,6 +7,8 @@ interface AnimatedBlockProps {
   delay?: number;
   parallaxSpeed?: number;
   zIndex?: number;
+  slideKey?: string; // Used to reset animations when navigating
+  showTextBackground?: boolean; // Semi-transparent background for text contrast
 }
 
 export function AnimatedBlock({ 
@@ -14,7 +16,9 @@ export function AnimatedBlock({
   animationType, 
   delay = 0,
   parallaxSpeed = 1,
-  zIndex = 1
+  zIndex = 1,
+  slideKey,
+  showTextBackground = false
 }: AnimatedBlockProps) {
   const [isVisible, setIsVisible] = useState(false);
   const [scrollOffset, setScrollOffset] = useState(0);
@@ -24,7 +28,14 @@ export function AnimatedBlock({
   const hasAnimation = animationType && animationType !== 'none';
   const hasParallax = parallaxSpeed !== 1 && parallaxSpeed !== undefined;
 
-  // Parallax scroll effect
+  // Reset visibility when slide changes (for backward navigation)
+  useEffect(() => {
+    if (hasAnimation) {
+      setIsVisible(false);
+    }
+  }, [slideKey, hasAnimation]);
+
+  // Parallax scroll effect - slower, smoother
   useEffect(() => {
     if (!hasParallax) return;
 
@@ -34,8 +45,8 @@ export function AnimatedBlock({
         const viewportHeight = window.innerHeight;
         // Calculate how far through the viewport the element is
         const scrollProgress = (viewportHeight - rect.top) / (viewportHeight + rect.height);
-        // Apply parallax based on speed (0 = static, 0.5 = slow, 1 = normal)
-        const offset = (scrollProgress - 0.5) * 100 * (1 - parallaxSpeed);
+        // Apply parallax based on speed - reduced multiplier for smoother effect
+        const offset = (scrollProgress - 0.5) * 50 * (1 - parallaxSpeed);
         setScrollOffset(offset);
       }
     };
@@ -54,7 +65,7 @@ export function AnimatedBlock({
     };
   }, [hasParallax, parallaxSpeed]);
 
-  // Visibility animation
+  // Visibility animation - observe and trigger
   useEffect(() => {
     if (!hasAnimation) {
       setIsVisible(true);
@@ -65,9 +76,12 @@ export function AnimatedBlock({
       ([entry]) => {
         if (entry.isIntersecting) {
           setIsVisible(true);
+        } else {
+          // Reset when leaving viewport for re-animation
+          setIsVisible(false);
         }
       },
-      { threshold: 0.2, rootMargin: '-50px' }
+      { threshold: 0.15, rootMargin: '-20px' }
     );
 
     if (ref.current) {
@@ -75,10 +89,11 @@ export function AnimatedBlock({
     }
 
     return () => observer.disconnect();
-  }, [hasAnimation]);
+  }, [hasAnimation, slideKey]);
 
   const getAnimationStyles = (): React.CSSProperties => {
-    const baseTransition = 'all 0.7s cubic-bezier(0.16, 1, 0.3, 1)';
+    // Slower, more elegant transition
+    const baseTransition = 'all 1.2s cubic-bezier(0.16, 1, 0.3, 1)';
     const parallaxTransform = hasParallax ? `translateY(${scrollOffset}px)` : '';
     
     if (!hasAnimation) {
@@ -93,19 +108,19 @@ export function AnimatedBlock({
       let initialTransform = '';
       switch (animationType) {
         case 'slide-left':
-          initialTransform = 'translateX(-60px)';
+          initialTransform = 'translateX(-40px)';
           break;
         case 'slide-right':
-          initialTransform = 'translateX(60px)';
+          initialTransform = 'translateX(40px)';
           break;
         case 'slide-up':
-          initialTransform = 'translateY(60px)';
+          initialTransform = 'translateY(40px)';
           break;
         case 'fade':
-          initialTransform = 'scale(0.95)';
+          initialTransform = 'scale(0.98)';
           break;
         default:
-          initialTransform = 'translateY(40px)';
+          initialTransform = 'translateY(30px)';
       }
       return { 
         opacity: 0, 
@@ -131,7 +146,8 @@ export function AnimatedBlock({
       ref={ref}
       style={getAnimationStyles()}
       className={cn(
-        animationType === 'ken-burns' && isVisible && 'animate-ken-burns'
+        animationType === 'ken-burns' && isVisible && 'animate-ken-burns',
+        showTextBackground && 'bg-background/50 backdrop-blur-sm rounded-lg px-6 py-4'
       )}
     >
       {children}
