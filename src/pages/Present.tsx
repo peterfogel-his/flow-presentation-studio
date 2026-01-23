@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useMemo, useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
@@ -49,13 +49,57 @@ export default function Present() {
   }, [id]);
 
   // Get waypoints
-  const waypoints: Waypoint[] = blocks
-    .filter((b) => b.is_waypoint)
-    .map((b) => ({
-      blockId: b.id,
-      title: b.waypoint_title || `Block ${b.position + 1}`,
-      position: b.position,
-    }));
+  const waypoints: Waypoint[] = useMemo(() => {
+    const wps = blocks
+      .filter((b) => b.is_waypoint)
+      .map((b) => ({
+        blockId: b.id,
+        title: b.waypoint_title || `Block ${b.position + 1}`,
+        position: b.position,
+      }))
+      .sort((a, b) => a.position - b.position);
+
+    // Ensure we always have at least one waypoint
+    if (wps.length === 0 && blocks.length > 0) {
+      wps.push({ blockId: blocks[0].id, title: 'Start', position: blocks[0].position });
+    }
+
+    return wps;
+  }, [blocks]);
+
+  type Slide = {
+    waypoint: Waypoint;
+    startPosition: number;
+    endPosition: number; // inclusive
+    blocks: Block[];
+    background?: BackgroundContent;
+  };
+
+  const slides: Slide[] = useMemo(() => {
+    if (blocks.length === 0 || waypoints.length === 0) return [];
+
+    const sorted = [...blocks].sort((a, b) => a.position - b.position);
+
+    const getLastBackgroundUpTo = (pos: number): BackgroundContent | undefined => {
+      const bg = sorted
+        .filter((b) => b.type === 'background' && b.position <= pos)
+        .slice(-1)[0];
+      return bg ? (bg.content as unknown as BackgroundContent) : undefined;
+    };
+
+    return waypoints.map((wp, idx) => {
+      const start = wp.position;
+      const end = idx < waypoints.length - 1 ? waypoints[idx + 1].position - 1 : sorted[sorted.length - 1].position;
+      const between = sorted.filter((b) => b.position >= start && b.position <= end && b.type !== 'background');
+      return {
+        waypoint: wp,
+        startPosition: start,
+        endPosition: end,
+        blocks: between,
+        background: getLastBackgroundUpTo(start),
+      };
+    });
+  }, [blocks, waypoints]);
 
   // Keyboard navigation
   useEffect(() => {
@@ -103,38 +147,23 @@ export default function Present() {
 
   const goToNextWaypoint = () => {
     if (currentWaypointIndex < waypoints.length - 1) {
-      const nextWaypoint = waypoints[currentWaypointIndex + 1];
-      scrollToBlock(nextWaypoint.blockId);
-      setCurrentWaypointIndex(currentWaypointIndex + 1);
+      setCurrentWaypointIndex((i) => i + 1);
     }
   };
 
   const goToPrevWaypoint = () => {
     if (currentWaypointIndex > 0) {
-      const prevWaypoint = waypoints[currentWaypointIndex - 1];
-      scrollToBlock(prevWaypoint.blockId);
-      setCurrentWaypointIndex(currentWaypointIndex - 1);
+      setCurrentWaypointIndex((i) => i - 1);
     }
   };
 
-  const scrollToBlock = (blockId: string) => {
-    document.getElementById(`present-block-${blockId}`)?.scrollIntoView({
-      behavior: 'smooth',
-      block: 'start',
-    });
-  };
+  // Clamp index if waypoints/slides change
+  useEffect(() => {
+    if (slides.length === 0) return;
+    setCurrentWaypointIndex((i) => Math.min(i, slides.length - 1));
+  }, [slides.length]);
 
-  // Get current background
-  const getCurrentBackground = (upToPosition: number): string => {
-    const bgBlocks = blocks.filter((b) => b.type === 'background' && b.position <= upToPosition);
-    if (bgBlocks.length === 0) return '#ffffff';
-    const lastBg = bgBlocks[bgBlocks.length - 1];
-    const content = lastBg.content as unknown as BackgroundContent;
-    if (content.type === 'color') return content.value;
-    if (content.type === 'gradient') return content.value;
-    if (content.type === 'image') return `url(${content.value})`;
-    return '#ffffff';
-  };
+  const currentSlide = slides[currentWaypointIndex];
 
   if (loading) {
     return (
@@ -153,12 +182,22 @@ export default function Present() {
     );
   }
 
+  if (!currentSlide) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-4">
+        <p className="text-muted-foreground">Kunde inte bygga slides</p>
+        <Button onClick={() => navigate('/')}>Tillbaka</Button>
+      </div>
+    );
+  }
+
   return (
     <div
       ref={containerRef}
-      className="min-h-screen bg-background relative overflow-y-auto"
-      style={{ scrollBehavior: 'smooth' }}
+      className="h-screen bg-background relative overflow-hidden"
     >
+      <SlideBackground background={currentSlide.background} />
+
       {/* Controls */}
       <div className="fixed top-4 right-4 z-50 flex gap-2">
         <Button
@@ -186,7 +225,6 @@ export default function Present() {
             <button
               key={wp.blockId}
               onClick={() => {
-                scrollToBlock(wp.blockId);
                 setCurrentWaypointIndex(index);
               }}
               className={cn(
@@ -201,51 +239,81 @@ export default function Present() {
         </div>
       )}
 
-      {/* Content */}
-      <div className="relative">
-        {blocks.map((block) => (
-          <PresentBlock
-            key={block.id}
-            block={block}
-            background={block.type === 'background' ? undefined : getCurrentBackground(block.position)}
-          />
-        ))}
+      {/* Content (one slide = all blocks between two waypoints) */}
+      <div className="relative z-10 h-full w-full">
+        <div className="h-full w-full overflow-hidden">
+          <div
+            key={currentSlide.waypoint.blockId}
+            className="h-full w-full flex items-center justify-center px-6 md:px-12"
+          >
+            <div className="w-full max-w-5xl space-y-10">
+              {currentSlide.blocks.length === 0 ? (
+                <div className="text-muted-foreground">(Tomt stopp)</div>
+              ) : (
+                currentSlide.blocks.map((block) => <PresentBlock key={block.id} block={block} />)
+              )}
+            </div>
+          </div>
+        </div>
       </div>
+
+      {/* Click zones for navigation */}
+      <button
+        type="button"
+        aria-label="Föregående stopp"
+        onClick={goToPrevWaypoint}
+        className="absolute inset-y-0 left-0 w-1/5 z-20 cursor-pointer bg-transparent"
+      />
+      <button
+        type="button"
+        aria-label="Nästa stopp"
+        onClick={goToNextWaypoint}
+        className="absolute inset-y-0 right-0 w-1/5 z-20 cursor-pointer bg-transparent"
+      />
     </div>
   );
 }
 
-function PresentBlock({ block, background }: { block: Block; background?: string }) {
-  const [isVisible, setIsVisible] = useState(false);
-  const blockRef = useRef<HTMLDivElement>(null);
+function SlideBackground({ background }: { background?: BackgroundContent }) {
+  if (!background) {
+    return <div className="absolute inset-0 bg-background transition-colors duration-500" />;
+  }
 
-  const animation = (block.animation_settings || { type: 'slide-up', delay: 0, duration: 500 }) as unknown as AnimationSettings;
+  // If someone saved a plain color into gradient, treat it as a color.
+  const value = background.value || '#ffffff';
+  const isProbablyGradient =
+    background.type === 'gradient' &&
+    (value.includes('linear-gradient') || value.includes('radial-gradient') || value.includes('conic-gradient'));
+
+  if (background.type === 'image') {
+    return (
+      <div
+        className="absolute inset-0 transition-opacity duration-500"
+        style={{
+          backgroundImage: `url(${value})`,
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+        }}
+      />
+    );
+  }
+
+  if (isProbablyGradient) {
+    return <div className="absolute inset-0 transition-opacity duration-500" style={{ background: value }} />;
+  }
+
+  return <div className="absolute inset-0 transition-colors duration-500" style={{ background: value }} />;
+}
+
+function PresentBlock({ block }: { block: Block }) {
+  const animation =
+    (block.animation_settings || { type: 'slide-up', delay: 0, duration: 500 }) as unknown as AnimationSettings;
   const layout = (block.layout_settings || { alignment: 'center', width: '100%' }) as unknown as LayoutSettings;
 
-  // Intersection observer for animations
-  useEffect(() => {
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          setIsVisible(true);
-        }
-      },
-      { threshold: 0.2 }
-    );
-
-    if (blockRef.current) {
-      observer.observe(blockRef.current);
-    }
-
-    return () => observer.disconnect();
-  }, []);
-
   const getAnimationClass = () => {
-    // No animation = show immediately
-    if (animation.type === 'none') return 'opacity-100';
-    // Not visible yet = hide until intersection observer triggers
-    if (!isVisible) return 'opacity-0';
     switch (animation.type) {
+      case 'none':
+        return '';
       case 'fade':
         return 'animate-fade-scale-in';
       case 'slide-left':
@@ -257,9 +325,10 @@ function PresentBlock({ block, background }: { block: Block; background?: string
       case 'scale':
         return 'animate-fade-scale-in';
       case 'ken-burns':
-        return 'animate-ken-burns';
+        // Ken burns doesn't make sense on single content blocks; keep it subtle.
+        return 'animate-fade-scale-in';
       default:
-        return 'opacity-100';
+        return '';
     }
   };
 
@@ -274,30 +343,10 @@ function PresentBlock({ block, background }: { block: Block; background?: string
     }
   };
 
-  // Background blocks are sticky
-  if (block.type === 'background') {
-    const content = block.content as unknown as BackgroundContent;
-    const bgStyle =
-      content.type === 'image'
-        ? { backgroundImage: `url(${content.value})`, backgroundSize: 'cover', backgroundPosition: 'center' }
-        : { background: content.value };
-
-    return (
-      <div
-        id={`present-block-${block.id}`}
-        ref={blockRef}
-        className="sticky top-0 min-h-screen -mb-screen"
-        style={{ ...bgStyle, zIndex: block.z_index }}
-      />
-    );
-  }
-
   return (
     <div
-      id={`present-block-${block.id}`}
-      ref={blockRef}
       className={cn(
-        'relative min-h-[50vh] flex flex-col justify-center px-8 py-16',
+        'relative flex flex-col justify-center',
         getAlignmentClass(),
         getAnimationClass()
       )}
@@ -307,9 +356,7 @@ function PresentBlock({ block, background }: { block: Block; background?: string
         animationDuration: `${animation.duration}ms`,
       }}
     >
-      <div className="max-w-4xl w-full mx-auto">
-        <BlockContent block={block} layout={layout} />
-      </div>
+      <BlockContent block={block} layout={layout} />
     </div>
   );
 }
