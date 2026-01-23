@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
@@ -159,22 +159,54 @@ export default function Editor() {
     }
   };
 
-  // Update block content
-  const handleBlockUpdate = async (blockId: string, updates: Partial<Block>) => {
+  // Debounced save to database
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
+  const pendingUpdatesRef = useRef<Map<string, Partial<Block>>>(new Map());
+
+  const saveToDatabase = useCallback(async (blockId: string, updates: Partial<Block>) => {
     const { error } = await supabase
       .from('blocks')
       .update(updates)
       .eq('id', blockId);
 
     if (error) {
-      toast.error('Kunde inte uppdatera block');
+      toast.error('Kunde inte spara ändringar');
       console.error(error);
-    } else {
-      setBlocks((prev) =>
-        prev.map((b) => (b.id === blockId ? { ...b, ...updates } : b))
-      );
     }
-  };
+  }, []);
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // Update block content - optimistic update with debounced save
+  const handleBlockUpdate = useCallback((blockId: string, updates: Partial<Block>) => {
+    // 1. Immediately update local state (optimistic)
+    setBlocks((prev) =>
+      prev.map((b) => (b.id === blockId ? { ...b, ...updates } : b))
+    );
+
+    // 2. Merge with pending updates for this block
+    const existing = pendingUpdatesRef.current.get(blockId) || {};
+    pendingUpdatesRef.current.set(blockId, { ...existing, ...updates });
+
+    // 3. Debounce the save (500ms)
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+    saveTimeoutRef.current = setTimeout(() => {
+      // Save all pending updates
+      pendingUpdatesRef.current.forEach((pendingUpdates, id) => {
+        saveToDatabase(id, pendingUpdates);
+      });
+      pendingUpdatesRef.current.clear();
+    }, 500);
+  }, [saveToDatabase]);
 
   // Delete block
   const handleBlockDelete = async (blockId: string) => {
