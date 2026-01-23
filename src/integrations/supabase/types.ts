@@ -17,46 +17,52 @@ export type Database = {
       blocks: {
         Row: {
           animation_settings: Json | null
-          animation_type: string | null
           content: Json
           created_at: string
           id: string
+          is_waypoint: boolean
           layout_settings: Json | null
           position: number
-          slide_id: string
+          presentation_id: string
           type: string
           updated_at: string
+          waypoint_title: string | null
+          z_index: number
         }
         Insert: {
           animation_settings?: Json | null
-          animation_type?: string | null
           content?: Json
           created_at?: string
           id?: string
+          is_waypoint?: boolean
           layout_settings?: Json | null
           position?: number
-          slide_id: string
+          presentation_id: string
           type?: string
           updated_at?: string
+          waypoint_title?: string | null
+          z_index?: number
         }
         Update: {
           animation_settings?: Json | null
-          animation_type?: string | null
           content?: Json
           created_at?: string
           id?: string
+          is_waypoint?: boolean
           layout_settings?: Json | null
           position?: number
-          slide_id?: string
+          presentation_id?: string
           type?: string
           updated_at?: string
+          waypoint_title?: string | null
+          z_index?: number
         }
         Relationships: [
           {
-            foreignKeyName: "blocks_slide_id_fkey"
-            columns: ["slide_id"]
+            foreignKeyName: "blocks_presentation_id_fkey"
+            columns: ["presentation_id"]
             isOneToOne: false
-            referencedRelation: "slides"
+            referencedRelation: "presentations"
             referencedColumns: ["id"]
           },
         ]
@@ -123,53 +129,6 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
-      }
-      slides: {
-        Row: {
-          background_type: string | null
-          background_value: string | null
-          created_at: string
-          id: string
-          position: number
-          presentation_id: string
-          settings: Json | null
-          title: string | null
-          transition_type: string | null
-          updated_at: string
-        }
-        Insert: {
-          background_type?: string | null
-          background_value?: string | null
-          created_at?: string
-          id?: string
-          position?: number
-          presentation_id: string
-          settings?: Json | null
-          title?: string | null
-          transition_type?: string | null
-          updated_at?: string
-        }
-        Update: {
-          background_type?: string | null
-          background_value?: string | null
-          created_at?: string
-          id?: string
-          position?: number
-          presentation_id?: string
-          settings?: Json | null
-          title?: string | null
-          transition_type?: string | null
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "slides_presentation_id_fkey"
-            columns: ["presentation_id"]
-            isOneToOne: false
-            referencedRelation: "presentations"
-            referencedColumns: ["id"]
-          },
-        ]
       }
     }
     Views: {
