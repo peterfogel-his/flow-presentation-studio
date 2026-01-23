@@ -59,6 +59,9 @@ export function SettingsPanel({
     return {
       width: (settings?.width as string) || '100%',
       alignment: (settings?.alignment as 'left' | 'center' | 'right') || 'center',
+      imageLayout: (settings?.imageLayout as 'default' | 'full-width' | 'left-edge' | 'right-edge') || 'default',
+      parallaxSpeed: (settings?.parallaxSpeed as number) ?? 1,
+      zIndex: (settings?.zIndex as number) ?? 1,
     };
   };
 
@@ -247,7 +250,7 @@ export function SettingsPanel({
                 <div className="space-y-2">
                   <Label className="text-xs">Animation</Label>
                   <Select
-                    value={selectedBlock.animation_type}
+                    value={selectedBlock.animation_type || 'none'}
                     onValueChange={(value) => 
                       onBlockUpdate(selectedBlock.id, { animation_type: value })
                     }
@@ -286,6 +289,88 @@ export function SettingsPanel({
                       <SelectItem value="left">Vänster</SelectItem>
                       <SelectItem value="center">Centrerad</SelectItem>
                       <SelectItem value="right">Höger</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Image-specific layout options */}
+                {selectedBlock.type === 'image' && (
+                  <div className="space-y-2">
+                    <Label className="text-xs">Bildlayout</Label>
+                    <Select
+                      value={getLayoutSettings(selectedBlock).imageLayout || 'default'}
+                      onValueChange={(value) => 
+                        onBlockUpdate(selectedBlock.id, { 
+                          layout_settings: { 
+                            ...getLayoutSettings(selectedBlock), 
+                            imageLayout: value as 'default' | 'full-width' | 'left-edge' | 'right-edge'
+                          } 
+                        })
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="default">Standard</SelectItem>
+                        <SelectItem value="full-width">Helbild</SelectItem>
+                        <SelectItem value="left-edge">Vänsterkant</SelectItem>
+                        <SelectItem value="right-edge">Högerkant</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+
+                <Separator />
+                
+                <h4 className="font-medium text-xs text-muted-foreground">Djup & Rörelse</h4>
+
+                <div className="space-y-2">
+                  <Label className="text-xs">Parallax-effekt</Label>
+                  <Select
+                    value={String(getLayoutSettings(selectedBlock).parallaxSpeed ?? 1)}
+                    onValueChange={(value) => 
+                      onBlockUpdate(selectedBlock.id, { 
+                        layout_settings: { 
+                          ...getLayoutSettings(selectedBlock), 
+                          parallaxSpeed: parseFloat(value)
+                        } 
+                      })
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="0">Statisk (följer bakgrund)</SelectItem>
+                      <SelectItem value="0.3">Långsam (djupkänsla)</SelectItem>
+                      <SelectItem value="0.6">Medium</SelectItem>
+                      <SelectItem value="1">Normal (ingen parallax)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-xs">Lager (Z-djup)</Label>
+                  <Select
+                    value={String(getLayoutSettings(selectedBlock).zIndex ?? 1)}
+                    onValueChange={(value) => 
+                      onBlockUpdate(selectedBlock.id, { 
+                        layout_settings: { 
+                          ...getLayoutSettings(selectedBlock), 
+                          zIndex: parseInt(value)
+                        } 
+                      })
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="0">Bakgrund</SelectItem>
+                      <SelectItem value="1">Standard</SelectItem>
+                      <SelectItem value="2">Mellan</SelectItem>
+                      <SelectItem value="3">Förgrund</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
