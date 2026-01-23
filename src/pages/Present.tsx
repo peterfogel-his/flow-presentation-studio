@@ -275,19 +275,22 @@ export default function Present() {
         )}
       >
         <div className="max-w-4xl w-full">
-          {currentBlocks.map((block, index) => (
-            <div 
-              key={block.id}
-              style={{ 
-                animationDelay: `${index * 100}ms`,
-                opacity: 0,
-                animationFillMode: 'forwards'
-              }}
-              className={getAnimationClass(block.animation_type)}
-            >
-              {renderBlock(block)}
-            </div>
-          ))}
+          {currentBlocks.map((block, index) => {
+            const hasAnimation = block.animation_type && block.animation_type !== 'none';
+            return (
+              <div 
+                key={block.id}
+                style={hasAnimation ? { 
+                  animationDelay: `${index * 100}ms`,
+                  opacity: 0,
+                  animationFillMode: 'forwards'
+                } : undefined}
+                className={getAnimationClass(block.animation_type)}
+              >
+                {renderBlock(block)}
+              </div>
+            );
+          })}
         </div>
       </div>
 

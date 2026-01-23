@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -9,7 +9,8 @@ import {
   Plus,
   GripVertical,
   Trash2,
-  Settings2
+  Upload,
+  Loader2
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -23,19 +24,14 @@ import type { Json } from '@/integrations/supabase/types';
 
 interface BlockEditorProps {
   blocks: Block[];
+  selectedBlockId: string | null;
+  uploading: boolean;
   onBlockCreate: (type: string) => void;
   onBlockUpdate: (id: string, content: Json) => void;
   onBlockDelete: (id: string) => void;
-  onBlockSettings: (block: Block) => void;
+  onBlockSelect: (block: Block | null) => void;
+  onImageUpload: (blockId: string, file: File) => void;
 }
-
-const blockTypeIcons: Record<string, typeof Type> = {
-  text: Type,
-  heading: Heading1,
-  image: Image,
-  video: Image,
-  container: Settings2,
-};
 
 const blockTypeLabels: Record<string, string> = {
   text: 'Text',
@@ -47,15 +43,32 @@ const blockTypeLabels: Record<string, string> = {
 
 export function BlockEditor({
   blocks,
+  selectedBlockId,
+  uploading,
   onBlockCreate,
   onBlockUpdate,
   onBlockDelete,
-  onBlockSettings,
+  onBlockSelect,
+  onImageUpload,
 }: BlockEditorProps) {
-  const [focusedId, setFocusedId] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const activeUploadBlockId = useRef<string | null>(null);
 
   const getContent = (block: Block): BlockContent => {
     return (block.content || {}) as BlockContent;
+  };
+
+  const handleImageClick = (blockId: string) => {
+    activeUploadBlockId.current = blockId;
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file && activeUploadBlockId.current) {
+      onImageUpload(activeUploadBlockId.current, file);
+    }
+    e.target.value = '';
   };
 
   const renderBlock = (block: Block) => {
@@ -91,15 +104,38 @@ export function BlockEditor({
         return (
           <div className="relative">
             {content.src ? (
-              <img
-                src={content.src}
-                alt={content.alt || ''}
-                className="max-w-full rounded-lg"
-              />
+              <div className="relative group/image">
+                <img
+                  src={content.src}
+                  alt={content.alt || ''}
+                  className="max-w-full rounded-lg"
+                />
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="absolute bottom-2 right-2 opacity-0 group-hover/image:opacity-100 transition-opacity"
+                  onClick={() => handleImageClick(block.id)}
+                >
+                  <Upload className="h-4 w-4 mr-1" />
+                  Byt bild
+                </Button>
+              </div>
             ) : (
-              <div className="aspect-video bg-muted rounded-lg flex flex-col items-center justify-center gap-2 cursor-pointer hover:bg-muted/80 transition-colors">
-                <Image className="h-8 w-8 text-muted-foreground" />
-                <span className="text-sm text-muted-foreground">Klicka för att lägga till bild</span>
+              <div 
+                className="aspect-video bg-muted rounded-lg flex flex-col items-center justify-center gap-2 cursor-pointer hover:bg-muted/80 transition-colors"
+                onClick={() => handleImageClick(block.id)}
+              >
+                {uploading ? (
+                  <>
+                    <Loader2 className="h-8 w-8 text-muted-foreground animate-spin" />
+                    <span className="text-sm text-muted-foreground">Laddar upp...</span>
+                  </>
+                ) : (
+                  <>
+                    <Image className="h-8 w-8 text-muted-foreground" />
+                    <span className="text-sm text-muted-foreground">Klicka för att lägga till bild</span>
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -116,6 +152,15 @@ export function BlockEditor({
 
   return (
     <div className="flex-1 overflow-auto p-8">
+      {/* Hidden file input for image uploads */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleFileChange}
+      />
+
       <div className="max-w-3xl mx-auto space-y-4">
         {blocks.length === 0 ? (
           <div className="text-center py-12">
@@ -128,11 +173,12 @@ export function BlockEditor({
               <div
                 key={block.id}
                 className={cn(
-                  'group relative rounded-lg transition-all duration-200',
-                  focusedId === block.id ? 'bg-accent/50' : 'hover:bg-accent/30'
+                  'group relative rounded-lg transition-all duration-200 cursor-pointer',
+                  selectedBlockId === block.id 
+                    ? 'bg-accent/50 ring-2 ring-primary/20' 
+                    : 'hover:bg-accent/30'
                 )}
-                onFocus={() => setFocusedId(block.id)}
-                onBlur={() => setFocusedId(null)}
+                onClick={() => onBlockSelect(block)}
               >
                 {/* Block toolbar */}
                 <div className="absolute -left-10 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
@@ -145,21 +191,16 @@ export function BlockEditor({
                   </Button>
                 </div>
 
-                {/* Block actions */}
-                <div className="absolute -right-10 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
+                {/* Delete button */}
+                <div className="absolute -right-10 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity">
                   <Button
                     variant="ghost"
                     size="icon"
                     className="h-6 w-6"
-                    onClick={() => onBlockSettings(block)}
-                  >
-                    <Settings2 className="h-4 w-4 text-muted-foreground" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-6 w-6"
-                    onClick={() => onBlockDelete(block.id)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onBlockDelete(block.id);
+                    }}
                   >
                     <Trash2 className="h-4 w-4 text-destructive" />
                   </Button>
