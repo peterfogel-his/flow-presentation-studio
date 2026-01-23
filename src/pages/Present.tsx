@@ -1,448 +1,373 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
-import { X, ChevronLeft, ChevronRight, Maximize, Minimize } from 'lucide-react';
+import { X, Maximize2, Minimize2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { AnimatedBlock } from '@/components/presentation/AnimatedBlock';
-import type { Slide, Block, BlockContent, LayoutSettings } from '@/types/presentation';
+import type {
+  Block,
+  Waypoint,
+  BackgroundContent,
+  HeadingContent,
+  TextContent,
+  ImageContent,
+  ListContent,
+  AnimationSettings,
+  LayoutSettings,
+} from '@/types/block';
 
 export default function Present() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  
-  const [slides, setSlides] = useState<Slide[]>([]);
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [blocks, setBlocks] = useState<Record<string, Block[]>>({});
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  const [loading, setLoading] = useState(true);
-  
   const containerRef = useRef<HTMLDivElement>(null);
-  const slideRefs = useRef<(HTMLElement | null)[]>([]);
 
-  // Fetch slides and blocks
+  const [blocks, setBlocks] = useState<Block[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [currentWaypointIndex, setCurrentWaypointIndex] = useState(0);
+
+  // Fetch blocks
   useEffect(() => {
     if (!id) return;
 
-    const fetchData = async () => {
-      const { data: slidesData } = await supabase
-        .from('slides')
+    const fetchBlocks = async () => {
+      const { data, error } = await supabase
+        .from('blocks')
         .select('*')
         .eq('presentation_id', id)
-        .order('position');
+        .order('position', { ascending: true });
 
-      const typedSlides = slidesData || [];
-      setSlides(typedSlides);
-
-      // Fetch all blocks for all slides
-      if (typedSlides.length > 0) {
-        const { data: blocksData } = await supabase
-          .from('blocks')
-          .select('*')
-          .in('slide_id', typedSlides.map((s) => s.id))
-          .order('position');
-
-        const groupedBlocks: Record<string, Block[]> = {};
-        (blocksData || []).forEach((block) => {
-          if (!groupedBlocks[block.slide_id]) {
-            groupedBlocks[block.slide_id] = [];
-          }
-          groupedBlocks[block.slide_id].push(block);
-        });
-        setBlocks(groupedBlocks);
+      if (error) {
+        console.error(error);
+      } else {
+        setBlocks((data || []) as Block[]);
       }
-
       setLoading(false);
     };
 
-    fetchData();
+    fetchBlocks();
   }, [id]);
 
-  // Track current slide via intersection observer
-  useEffect(() => {
-    if (slides.length === 0) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            const index = slideRefs.current.findIndex((ref) => ref === entry.target);
-            if (index !== -1) {
-              setCurrentIndex(index);
-            }
-          }
-        });
-      },
-      { threshold: 0.6 }
-    );
-
-    slideRefs.current.forEach((ref) => {
-      if (ref) observer.observe(ref);
-    });
-
-    return () => observer.disconnect();
-  }, [slides]);
+  // Get waypoints
+  const waypoints: Waypoint[] = blocks
+    .filter((b) => b.is_waypoint)
+    .map((b) => ({
+      blockId: b.id,
+      title: b.waypoint_title || `Block ${b.position + 1}`,
+      position: b.position,
+    }));
 
   // Keyboard navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      switch (e.key) {
-        case 'ArrowRight':
-        case 'ArrowDown':
-        case ' ':
-          e.preventDefault();
-          goNext();
-          break;
-        case 'ArrowLeft':
-        case 'ArrowUp':
-          e.preventDefault();
-          goPrev();
-          break;
-        case 'Escape':
-          if (isFullscreen) {
-            document.exitFullscreen();
-          } else {
-            navigate(-1);
-          }
-          break;
-        case 'f':
-          toggleFullscreen();
-          break;
+      if (e.key === 'Escape') {
+        if (isFullscreen) {
+          document.exitFullscreen?.();
+        } else {
+          navigate('/');
+        }
+      }
+      if (e.key === 'f' || e.key === 'F') {
+        toggleFullscreen();
+      }
+      if (e.key === 'ArrowDown' || e.key === ' ' || e.key === 'PageDown') {
+        e.preventDefault();
+        goToNextWaypoint();
+      }
+      if (e.key === 'ArrowUp' || e.key === 'PageUp') {
+        e.preventDefault();
+        goToPrevWaypoint();
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [currentIndex, slides.length, isFullscreen, navigate]);
+  }, [isFullscreen, waypoints, currentWaypointIndex]);
 
-  // Fullscreen change handler
+  // Fullscreen change listener
   useEffect(() => {
     const handleFullscreenChange = () => {
       setIsFullscreen(!!document.fullscreenElement);
     };
-
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
   }, []);
 
-  const scrollToSlide = useCallback((index: number) => {
-    const targetRef = slideRefs.current[index];
-    if (targetRef) {
-      targetRef.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, []);
-
-  const goNext = useCallback(() => {
-    const nextIndex = Math.min(currentIndex + 1, slides.length - 1);
-    scrollToSlide(nextIndex);
-  }, [currentIndex, slides.length, scrollToSlide]);
-
-  const goPrev = useCallback(() => {
-    const prevIndex = Math.max(currentIndex - 1, 0);
-    scrollToSlide(prevIndex);
-  }, [currentIndex, scrollToSlide]);
-
-  const toggleFullscreen = useCallback(() => {
-    if (document.fullscreenElement) {
-      document.exitFullscreen();
+  const toggleFullscreen = () => {
+    if (isFullscreen) {
+      document.exitFullscreen?.();
     } else {
-      document.documentElement.requestFullscreen();
-    }
-  }, []);
-
-  const getBackgroundStyle = (slide: Slide): React.CSSProperties => {
-    switch (slide.background_type) {
-      case 'color':
-        return { backgroundColor: slide.background_value || undefined };
-      case 'image':
-        return {
-          backgroundImage: slide.background_value ? `url(${slide.background_value})` : undefined,
-          backgroundSize: 'cover',
-          backgroundPosition: 'center',
-        };
-      case 'gradient':
-        return {
-          backgroundImage: slide.background_value || 'linear-gradient(to bottom, #4f46e5, #7c3aed)',
-        };
-      default:
-        return { backgroundColor: 'hsl(var(--background))' };
+      containerRef.current?.requestFullscreen?.();
     }
   };
 
-  const getContent = (block: Block): BlockContent => {
-    return (block.content || {}) as BlockContent;
-  };
-
-  const getLayoutSettings = (block: Block): LayoutSettings => {
-    const settings = block.layout_settings as Record<string, unknown> | null;
-    return {
-      width: (settings?.width as string) || '100%',
-      alignment: (settings?.alignment as 'left' | 'center' | 'right') || 'center',
-      imageLayout: (settings?.imageLayout as 'default' | 'full-width' | 'left-edge' | 'right-edge') || 'default',
-      parallaxSpeed: (settings?.parallaxSpeed as number) ?? 1,
-      zIndex: (settings?.zIndex as number) ?? 1,
-      showTextBackground: (settings?.showTextBackground as boolean) ?? false,
-    };
-  };
-
-  const renderBlock = (block: Block, isEdgeLayout: boolean = false) => {
-    const content = getContent(block);
-    const layout = getLayoutSettings(block);
-    const alignmentClass = {
-      left: 'text-left',
-      center: 'text-center',
-      right: 'text-right',
-    }[layout.alignment];
-
-    switch (block.type) {
-      case 'heading':
-        const level = content.level || 1;
-        const HeadingTag = `h${level}` as keyof JSX.IntrinsicElements;
-        return (
-          <HeadingTag 
-            className={cn(
-              alignmentClass,
-              level === 1 && 'text-6xl font-bold mb-8',
-              level === 2 && 'text-4xl font-semibold mb-6',
-              level === 3 && 'text-2xl font-medium mb-4'
-            )}
-          >
-            {content.text}
-          </HeadingTag>
-        );
-
-      case 'text':
-        return (
-          <p className={cn('text-xl leading-relaxed mb-4', alignmentClass)}>
-            {content.text}
-          </p>
-        );
-
-      case 'image':
-        if (!content.src) return null;
-        
-        const imageLayout = layout.imageLayout || 'default';
-        
-        // Edge-to-edge layouts render differently
-        if (imageLayout === 'full-width') {
-          return (
-            <img
-              src={content.src}
-              alt={content.alt || ''}
-              className="w-full h-full object-cover"
-            />
-          );
-        }
-        
-        if (imageLayout === 'left-edge' || imageLayout === 'right-edge') {
-          return (
-            <img
-              src={content.src}
-              alt={content.alt || ''}
-              className="w-full h-full object-cover"
-            />
-          );
-        }
-        
-        // Default layout
-        return (
-          <div className={cn('mb-6', alignmentClass)}>
-            <img
-              src={content.src}
-              alt={content.alt || ''}
-              className="max-w-full max-h-[60vh] rounded-lg mx-auto"
-            />
-          </div>
-        );
-
-      default:
-        return null;
+  const goToNextWaypoint = () => {
+    if (currentWaypointIndex < waypoints.length - 1) {
+      const nextWaypoint = waypoints[currentWaypointIndex + 1];
+      scrollToBlock(nextWaypoint.blockId);
+      setCurrentWaypointIndex(currentWaypointIndex + 1);
     }
   };
 
-  // Check if a block should be rendered as edge-to-edge (outside the container)
-  const isEdgeLayout = (block: Block): boolean => {
-    if (block.type !== 'image') return false;
-    const layout = getLayoutSettings(block);
-    return layout.imageLayout === 'full-width' || 
-           layout.imageLayout === 'left-edge' || 
-           layout.imageLayout === 'right-edge';
+  const goToPrevWaypoint = () => {
+    if (currentWaypointIndex > 0) {
+      const prevWaypoint = waypoints[currentWaypointIndex - 1];
+      scrollToBlock(prevWaypoint.blockId);
+      setCurrentWaypointIndex(currentWaypointIndex - 1);
+    }
   };
 
-  // Get edge layout CSS classes
-  const getEdgeLayoutClasses = (block: Block): string => {
-    const layout = getLayoutSettings(block);
-    switch (layout.imageLayout) {
-      case 'full-width':
-        return 'absolute inset-0';
-      case 'left-edge':
-        return 'absolute left-0 top-0 bottom-0 w-1/2';
-      case 'right-edge':
-        return 'absolute right-0 top-0 bottom-0 w-1/2';
-      default:
-        return '';
-    }
+  const scrollToBlock = (blockId: string) => {
+    document.getElementById(`present-block-${blockId}`)?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'start',
+    });
+  };
+
+  // Get current background
+  const getCurrentBackground = (upToPosition: number): string => {
+    const bgBlocks = blocks.filter((b) => b.type === 'background' && b.position <= upToPosition);
+    if (bgBlocks.length === 0) return '#ffffff';
+    const lastBg = bgBlocks[bgBlocks.length - 1];
+    const content = lastBg.content as unknown as BackgroundContent;
+    if (content.type === 'color') return content.value;
+    if (content.type === 'gradient') return content.value;
+    if (content.type === 'image') return `url(${content.value})`;
+    return '#ffffff';
   };
 
   if (loading) {
     return (
-      <div className="fixed inset-0 bg-background flex items-center justify-center">
-        <div className="animate-pulse text-muted-foreground">Laddar presentation...</div>
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="animate-pulse text-muted-foreground">Laddar...</div>
       </div>
     );
   }
 
-  if (slides.length === 0) {
+  if (blocks.length === 0) {
     return (
-      <div className="fixed inset-0 bg-background flex items-center justify-center">
-        <div className="text-center">
-          <p className="text-muted-foreground mb-4">Inga stopp i denna presentation</p>
-          <Button onClick={() => navigate(-1)}>Tillbaka</Button>
-        </div>
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-4">
+        <p className="text-muted-foreground">Ingen presentation hittades</p>
+        <Button onClick={() => navigate('/')}>Tillbaka</Button>
       </div>
     );
   }
 
   return (
-    <div className="fixed inset-0 bg-background">
-      {/* Controls overlay */}
-      <div className="fixed top-4 right-4 z-50 flex gap-2 opacity-0 hover:opacity-100 transition-opacity">
-        <Button variant="secondary" size="icon" onClick={toggleFullscreen}>
-          {isFullscreen ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
+    <div
+      ref={containerRef}
+      className="min-h-screen bg-background relative overflow-y-auto"
+      style={{ scrollBehavior: 'smooth' }}
+    >
+      {/* Controls */}
+      <div className="fixed top-4 right-4 z-50 flex gap-2">
+        <Button
+          variant="secondary"
+          size="icon"
+          className="bg-background/80 backdrop-blur"
+          onClick={toggleFullscreen}
+        >
+          {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
         </Button>
-        <Button variant="secondary" size="icon" onClick={() => navigate(-1)}>
+        <Button
+          variant="secondary"
+          size="icon"
+          className="bg-background/80 backdrop-blur"
+          onClick={() => navigate('/')}
+        >
           <X className="h-4 w-4" />
         </Button>
       </div>
 
-      {/* Navigation arrows */}
-      <button
-        className={cn(
-          'fixed left-4 top-1/2 -translate-y-1/2 z-50 p-4 rounded-full',
-          'bg-background/20 hover:bg-background/40 transition-all',
-          'opacity-0 hover:opacity-100',
-          currentIndex === 0 && 'invisible'
-        )}
-        onClick={goPrev}
-      >
-        <ChevronLeft className="h-8 w-8" />
-      </button>
-
-      <button
-        className={cn(
-          'fixed right-4 top-1/2 -translate-y-1/2 z-50 p-4 rounded-full',
-          'bg-background/20 hover:bg-background/40 transition-all',
-          'opacity-0 hover:opacity-100',
-          currentIndex === slides.length - 1 && 'invisible'
-        )}
-        onClick={goNext}
-      >
-        <ChevronRight className="h-8 w-8" />
-      </button>
-
-      {/* Scroll container with stacked slides - each slide covers the previous */}
-      <div 
-        ref={containerRef}
-        className="h-screen overflow-y-scroll snap-y snap-mandatory scrollbar-hide"
-        style={{ scrollBehavior: 'smooth' }}
-      >
-        {slides.map((slide, slideIndex) => {
-          const slideBlocks = blocks[slide.id] || [];
-          const edgeBlocks = slideBlocks.filter(isEdgeLayout);
-          const normalBlocks = slideBlocks.filter(b => !isEdgeLayout(b));
-          const slideKey = `${slide.id}-${currentIndex}`; // Key for animation reset
-          
-          return (
-            <section
-              key={slide.id}
-              ref={(el) => { slideRefs.current[slideIndex] = el; }}
-              className="min-h-screen h-screen snap-start snap-always flex items-center justify-center relative overflow-hidden"
-              style={{
-                ...getBackgroundStyle(slide),
-                // Stack slides so new one covers the previous (sticky positioning)
-                position: 'sticky',
-                top: 0,
-                zIndex: slideIndex,
+      {/* Waypoint progress */}
+      {waypoints.length > 1 && (
+        <div className="fixed left-4 top-1/2 -translate-y-1/2 z-50 flex flex-col gap-2">
+          {waypoints.map((wp, index) => (
+            <button
+              key={wp.blockId}
+              onClick={() => {
+                scrollToBlock(wp.blockId);
+                setCurrentWaypointIndex(index);
               }}
-            >
-              {/* Edge-to-edge blocks (rendered behind/beside content) */}
-              {edgeBlocks.map((block, blockIndex) => {
-                const layout = getLayoutSettings(block);
-                return (
-                  <div
-                    key={block.id}
-                    className={cn(getEdgeLayoutClasses(block), 'z-0')}
-                  >
-                    <AnimatedBlock
-                      animationType={block.animation_type}
-                      delay={blockIndex * 150}
-                      parallaxSpeed={layout.parallaxSpeed}
-                      zIndex={layout.zIndex}
-                      slideKey={slideKey}
-                      showTextBackground={layout.showTextBackground}
-                    >
-                      {renderBlock(block, true)}
-                    </AnimatedBlock>
-                  </div>
-                );
-              })}
-              
-              {/* Normal blocks (in centered container) */}
-              <div className="max-w-4xl w-full px-8 py-16 relative z-10">
-                {normalBlocks.map((block, blockIndex) => {
-                  const layout = getLayoutSettings(block);
-                  const isTextBlock = block.type === 'heading' || block.type === 'text';
-                  return (
-                    <AnimatedBlock
-                      key={block.id}
-                      animationType={block.animation_type}
-                      delay={blockIndex * 150}
-                      parallaxSpeed={layout.parallaxSpeed}
-                      zIndex={layout.zIndex}
-                      slideKey={slideKey}
-                      showTextBackground={isTextBlock && layout.showTextBackground}
-                    >
-                      {renderBlock(block)}
-                    </AnimatedBlock>
-                  );
-                })}
-              </div>
-            </section>
-          );
-        })}
-      </div>
+              className={cn(
+                'w-3 h-3 rounded-full transition-all',
+                index === currentWaypointIndex
+                  ? 'bg-primary scale-125'
+                  : 'bg-muted-foreground/30 hover:bg-muted-foreground/50'
+              )}
+              title={wp.title}
+            />
+          ))}
+        </div>
+      )}
 
-      {/* Progress indicator */}
-      <div className="fixed bottom-4 left-1/2 -translate-x-1/2 flex gap-2 z-50">
-        {slides.map((_, index) => (
-          <button
-            key={index}
-            className={cn(
-              'w-2 h-2 rounded-full transition-all',
-              index === currentIndex 
-                ? 'bg-primary w-6' 
-                : 'bg-primary/30 hover:bg-primary/50'
-            )}
-            onClick={() => scrollToSlide(index)}
+      {/* Content */}
+      <div className="relative">
+        {blocks.map((block) => (
+          <PresentBlock
+            key={block.id}
+            block={block}
+            background={block.type === 'background' ? undefined : getCurrentBackground(block.position)}
           />
         ))}
       </div>
-
-      {/* Slide counter */}
-      <div className="fixed bottom-4 right-4 text-sm text-muted-foreground z-50">
-        {currentIndex + 1} / {slides.length}
-      </div>
-
-      {/* Hide scrollbar */}
-      <style>{`
-        .scrollbar-hide::-webkit-scrollbar {
-          display: none;
-        }
-        .scrollbar-hide {
-          -ms-overflow-style: none;
-          scrollbar-width: none;
-        }
-      `}</style>
     </div>
   );
+}
+
+function PresentBlock({ block, background }: { block: Block; background?: string }) {
+  const [isVisible, setIsVisible] = useState(false);
+  const blockRef = useRef<HTMLDivElement>(null);
+
+  const animation = (block.animation_settings || { type: 'none', delay: 0, duration: 500 }) as unknown as AnimationSettings;
+  const layout = (block.layout_settings || { alignment: 'center', width: '100%' }) as unknown as LayoutSettings;
+
+  // Intersection observer for animations
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setIsVisible(true);
+        }
+      },
+      { threshold: 0.2 }
+    );
+
+    if (blockRef.current) {
+      observer.observe(blockRef.current);
+    }
+
+    return () => observer.disconnect();
+  }, []);
+
+  const getAnimationClass = () => {
+    if (!isVisible || animation.type === 'none') return 'opacity-0';
+    switch (animation.type) {
+      case 'fade':
+        return 'animate-fade-scale-in';
+      case 'slide-left':
+        return 'animate-slide-in-left';
+      case 'slide-right':
+        return 'animate-slide-in-right';
+      case 'slide-up':
+        return 'animate-slide-in-up';
+      case 'scale':
+        return 'animate-fade-scale-in';
+      case 'ken-burns':
+        return 'animate-ken-burns';
+      default:
+        return '';
+    }
+  };
+
+  const getAlignmentClass = () => {
+    switch (layout.alignment) {
+      case 'left':
+        return 'text-left items-start';
+      case 'right':
+        return 'text-right items-end';
+      default:
+        return 'text-center items-center';
+    }
+  };
+
+  // Background blocks are sticky
+  if (block.type === 'background') {
+    const content = block.content as unknown as BackgroundContent;
+    const bgStyle =
+      content.type === 'image'
+        ? { backgroundImage: `url(${content.value})`, backgroundSize: 'cover', backgroundPosition: 'center' }
+        : { background: content.value };
+
+    return (
+      <div
+        id={`present-block-${block.id}`}
+        ref={blockRef}
+        className="sticky top-0 min-h-screen -mb-screen"
+        style={{ ...bgStyle, zIndex: block.z_index }}
+      />
+    );
+  }
+
+  return (
+    <div
+      id={`present-block-${block.id}`}
+      ref={blockRef}
+      className={cn(
+        'relative min-h-[50vh] flex flex-col justify-center px-8 py-16',
+        getAlignmentClass(),
+        getAnimationClass()
+      )}
+      style={{
+        zIndex: block.z_index + 10,
+        animationDelay: `${animation.delay}ms`,
+        animationDuration: `${animation.duration}ms`,
+      }}
+    >
+      <div className="max-w-4xl w-full mx-auto">
+        <BlockContent block={block} layout={layout} />
+      </div>
+    </div>
+  );
+}
+
+function BlockContent({ block, layout }: { block: Block; layout: LayoutSettings }) {
+  switch (block.type) {
+    case 'heading': {
+      const content = block.content as unknown as HeadingContent;
+      const Tag = `h${content.level || 1}` as 'h1' | 'h2' | 'h3';
+      return (
+        <Tag
+          className={cn(
+            content.level === 1 && 'text-5xl md:text-7xl font-bold',
+            content.level === 2 && 'text-3xl md:text-5xl font-semibold',
+            content.level === 3 && 'text-2xl md:text-3xl font-medium'
+          )}
+        >
+          {content.text}
+        </Tag>
+      );
+    }
+
+    case 'text': {
+      const content = block.content as unknown as TextContent;
+      return <p className="text-xl md:text-2xl leading-relaxed whitespace-pre-wrap">{content.text}</p>;
+    }
+
+    case 'image': {
+      const content = block.content as unknown as ImageContent;
+      return (
+        <img
+          src={content.src}
+          alt={content.alt || ''}
+          className={cn(
+            'rounded-lg shadow-lg',
+            layout.layout === 'full-width' && 'w-full',
+            layout.layout === 'contained' && 'max-w-2xl mx-auto'
+          )}
+        />
+      );
+    }
+
+    case 'list': {
+      const content = block.content as unknown as ListContent;
+      const ListTag = content.style === 'numbered' ? 'ol' : 'ul';
+      return (
+        <ListTag
+          className={cn(
+            'text-xl md:text-2xl space-y-2',
+            content.style === 'bullet' && 'list-disc list-inside',
+            content.style === 'numbered' && 'list-decimal list-inside'
+          )}
+        >
+          {content.items?.map((item, i) => (
+            <li key={i}>{item}</li>
+          ))}
+        </ListTag>
+      );
+    }
+
+    default:
+      return null;
+  }
 }

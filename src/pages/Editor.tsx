@@ -1,33 +1,37 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
-import { EditorHeader } from '@/components/editor/EditorHeader';
-import { SlidePanel } from '@/components/editor/SlidePanel';
-import { BlockEditor } from '@/components/editor/BlockEditor';
-import { SettingsPanel } from '@/components/editor/SettingsPanel';
-import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
-import type { Presentation, Slide, Block, BlockContent } from '@/types/presentation';
+import { Skeleton } from '@/components/ui/skeleton';
+import { EditorHeader } from '@/components/editor/EditorHeader';
+import { WaypointSidebar } from '@/components/editor/WaypointSidebar';
+import { BlockCanvas } from '@/components/editor/BlockCanvas';
+import { BlockSettings } from '@/components/editor/BlockSettings';
+import type { Block, Presentation, Waypoint, BlockType } from '@/types/block';
 import type { Json } from '@/integrations/supabase/types';
 
 export default function Editor() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { user } = useAuth();
-  
+  const { user, loading: authLoading } = useAuth();
+
   const [presentation, setPresentation] = useState<Presentation | null>(null);
-  const [slides, setSlides] = useState<Slide[]>([]);
   const [blocks, setBlocks] = useState<Block[]>([]);
-  const [activeSlide, setActiveSlide] = useState<Slide | null>(null);
-  const [selectedBlock, setSelectedBlock] = useState<Block | null>(null);
+  const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [uploading, setUploading] = useState(false);
 
-  // Fetch presentation data
+  // Redirect if not authenticated
   useEffect(() => {
-    if (!id) return;
+    if (!authLoading && !user) {
+      navigate('/');
+    }
+  }, [user, authLoading, navigate]);
+
+  // Fetch presentation and blocks
+  useEffect(() => {
+    if (!id || !user) return;
 
     const fetchData = async () => {
       // Fetch presentation
@@ -38,375 +42,232 @@ export default function Editor() {
         .maybeSingle();
 
       if (presError || !presData) {
-        toast.error('Kunde inte hitta presentationen');
+        toast.error('Kunde inte hämta presentation');
         navigate('/');
         return;
       }
 
-      setPresentation(presData);
+      setPresentation(presData as Presentation);
 
-      // Fetch slides
-      const { data: slidesData } = await supabase
-        .from('slides')
+      // Fetch blocks
+      const { data: blocksData, error: blocksError } = await supabase
+        .from('blocks')
         .select('*')
         .eq('presentation_id', id)
-        .order('position');
+        .order('position', { ascending: true });
 
-      const typedSlides = slidesData || [];
-      setSlides(typedSlides);
-      
-      if (typedSlides.length > 0) {
-        setActiveSlide(typedSlides[0]);
+      if (blocksError) {
+        toast.error('Kunde inte hämta block');
+        console.error(blocksError);
+      } else {
+        setBlocks((blocksData || []) as Block[]);
       }
 
       setLoading(false);
     };
 
     fetchData();
-  }, [id, navigate]);
+  }, [id, user, navigate]);
 
-  // Fetch blocks when active slide changes
-  useEffect(() => {
-    if (!activeSlide) {
-      setBlocks([]);
-      setSelectedBlock(null);
-      return;
+  // Get waypoints from blocks
+  const waypoints: Waypoint[] = blocks
+    .filter((block) => block.is_waypoint)
+    .map((block) => ({
+      blockId: block.id,
+      title: block.waypoint_title || getDefaultWaypointTitle(block),
+      position: block.position,
+    }));
+
+  function getDefaultWaypointTitle(block: Block): string {
+    const content = block.content as Record<string, unknown>;
+    if (block.type === 'heading' && content.text) {
+      return String(content.text).slice(0, 30);
     }
+    if (block.type === 'background') {
+      return `Sektion ${block.position + 1}`;
+    }
+    return `Block ${block.position + 1}`;
+  }
 
-    const fetchBlocks = async () => {
-      const { data } = await supabase
-        .from('blocks')
-        .select('*')
-        .eq('slide_id', activeSlide.id)
-        .order('position');
-
-      setBlocks(data || []);
-      setSelectedBlock(null);
-    };
-
-    fetchBlocks();
-  }, [activeSlide?.id]);
-
-  // Save presentation
-  const handleSave = useCallback(async () => {
+  // Save presentation title
+  const handleSave = async () => {
     if (!presentation) return;
-    
     setSaving(true);
-    
+
     const { error } = await supabase
       .from('presentations')
-      .update({ 
+      .update({
         title: presentation.title,
-        updated_at: new Date().toISOString()
+        updated_at: new Date().toISOString(),
       })
       .eq('id', presentation.id);
 
     if (error) {
       toast.error('Kunde inte spara');
+      console.error(error);
     } else {
       toast.success('Sparat!');
     }
-    
     setSaving(false);
-  }, [presentation]);
-
-  // Create slide
-  const handleSlideCreate = async (afterPosition?: number) => {
-    if (!id) return;
-
-    const newPosition = afterPosition !== undefined ? afterPosition + 1 : slides.length;
-    
-    // If inserting in middle, update positions of subsequent slides
-    if (afterPosition !== undefined && afterPosition < slides.length - 1) {
-      const slidesToUpdate = slides.filter(s => s.position > afterPosition);
-      for (const slide of slidesToUpdate) {
-        await supabase
-          .from('slides')
-          .update({ position: slide.position + 1 })
-          .eq('id', slide.id);
-      }
-    }
-
-    const { data, error } = await supabase
-      .from('slides')
-      .insert({
-        presentation_id: id,
-        position: newPosition,
-        title: `Stopp ${newPosition + 1}`,
-      })
-      .select()
-      .single();
-
-    if (error) {
-      toast.error('Kunde inte skapa stopp');
-    } else if (data) {
-      // Refetch all slides to get correct positions
-      const { data: refreshedSlides } = await supabase
-        .from('slides')
-        .select('*')
-        .eq('presentation_id', id)
-        .order('position');
-      
-      setSlides(refreshedSlides || []);
-      setActiveSlide(data);
-    }
   };
 
-  // Duplicate slide
-  const handleSlideDuplicate = async (slide: Slide) => {
+  // Create new block
+  const handleBlockCreate = async (type: BlockType, afterPosition: number) => {
     if (!id) return;
 
-    // Create new slide after the current one
-    const newPosition = slide.position + 1;
-    
-    // Update positions of subsequent slides
-    const slidesToUpdate = slides.filter(s => s.position > slide.position);
-    for (const s of slidesToUpdate) {
+    // Shift positions for blocks after insertion point
+    const blocksToUpdate = blocks.filter((b) => b.position > afterPosition);
+    for (const block of blocksToUpdate) {
       await supabase
-        .from('slides')
-        .update({ position: s.position + 1 })
-        .eq('id', s.id);
+        .from('blocks')
+        .update({ position: block.position + 1 })
+        .eq('id', block.id);
     }
 
-    // Create the new slide
-    const { data: newSlide, error: slideError } = await supabase
-      .from('slides')
-      .insert({
-        presentation_id: id,
-        position: newPosition,
-        title: slide.title ? `${slide.title} (kopia)` : `Stopp ${newPosition + 1}`,
-        background_type: slide.background_type,
-        background_value: slide.background_value,
-        transition_type: slide.transition_type,
-        settings: slide.settings,
-      })
-      .select()
-      .single();
-
-    if (slideError || !newSlide) {
-      toast.error('Kunde inte duplicera stopp');
-      return;
-    }
-
-    // Fetch blocks from original slide and copy them
-    const { data: originalBlocks } = await supabase
-      .from('blocks')
-      .select('*')
-      .eq('slide_id', slide.id)
-      .order('position');
-
-    if (originalBlocks && originalBlocks.length > 0) {
-      const blocksToInsert = originalBlocks.map(block => ({
-        slide_id: newSlide.id,
-        type: block.type,
-        content: block.content,
-        position: block.position,
-        animation_type: block.animation_type,
-        animation_settings: block.animation_settings,
-        layout_settings: block.layout_settings,
-      }));
-
-      await supabase.from('blocks').insert(blocksToInsert);
-    }
-
-    // Refetch all slides
-    const { data: refreshedSlides } = await supabase
-      .from('slides')
-      .select('*')
-      .eq('presentation_id', id)
-      .order('position');
-    
-    setSlides(refreshedSlides || []);
-    setActiveSlide(newSlide);
-    toast.success('Stopp duplicerat!');
-  };
-
-  // Delete slide
-  const handleSlideDelete = async (slideId: string) => {
-    if (slides.length <= 1) {
-      toast.error('Du måste ha minst ett stopp');
-      return;
-    }
-
-    const { error } = await supabase
-      .from('slides')
-      .delete()
-      .eq('id', slideId);
-
-    if (error) {
-      toast.error('Kunde inte ta bort stopp');
-    } else {
-      const newSlides = slides.filter((s) => s.id !== slideId);
-      setSlides(newSlides);
-      
-      if (activeSlide?.id === slideId) {
-        setActiveSlide(newSlides[0] || null);
-      }
-    }
-  };
-
-  // Update slide
-  const handleSlideUpdate = async (updates: Partial<Slide>) => {
-    if (!activeSlide) return;
-
-    const updatedSlide = { ...activeSlide, ...updates };
-    setActiveSlide(updatedSlide);
-    setSlides(slides.map((s) => s.id === activeSlide.id ? updatedSlide : s));
-
-    const { title, background_type, background_value, transition_type } = updates;
-    const dbUpdates: Record<string, unknown> = {};
-    if (title !== undefined) dbUpdates.title = title;
-    if (background_type !== undefined) dbUpdates.background_type = background_type;
-    if (background_value !== undefined) dbUpdates.background_value = background_value;
-    if (transition_type !== undefined) dbUpdates.transition_type = transition_type;
-
-    await supabase
-      .from('slides')
-      .update(dbUpdates)
-      .eq('id', activeSlide.id);
-  };
-
-  // Create block
-  const handleBlockCreate = async (type: string) => {
-    if (!activeSlide) return;
-
-    const newPosition = blocks.length;
-    const content: BlockContent = type === 'heading' 
-      ? { text: '', level: 1 } 
-      : type === 'text' 
-      ? { text: '' } 
-      : {};
+    // Default content based on type
+    const defaultContent: Record<BlockType, Json> = {
+      background: { type: 'color', value: '#f5f5f5' },
+      heading: { text: '', level: 1 },
+      text: { text: '' },
+      image: { src: '', alt: '' },
+      list: { items: [''], style: 'bullet' },
+    };
 
     const { data, error } = await supabase
       .from('blocks')
       .insert({
-        slide_id: activeSlide.id,
+        presentation_id: id,
         type,
-        content: content as Json,
-        position: newPosition,
+        position: afterPosition + 1,
+        content: defaultContent[type],
+        is_waypoint: type === 'background',
       })
       .select()
       .single();
 
     if (error) {
       toast.error('Kunde inte skapa block');
+      console.error(error);
     } else if (data) {
-      setBlocks([...blocks, data]);
-      setSelectedBlock(data);
+      setBlocks((prev) => {
+        const updated = prev.map((b) =>
+          b.position > afterPosition ? { ...b, position: b.position + 1 } : b
+        );
+        return [...updated, data as Block].sort((a, b) => a.position - b.position);
+      });
+      setSelectedBlockId(data.id);
     }
   };
 
   // Update block content
-  const handleBlockContentUpdate = async (blockId: string, content: Json) => {
-    const updatedBlocks = blocks.map((b) => b.id === blockId ? { ...b, content } : b);
-    setBlocks(updatedBlocks);
-    
-    // Update selected block if it's the one being edited
-    if (selectedBlock?.id === blockId) {
-      setSelectedBlock({ ...selectedBlock, content });
-    }
-
-    await supabase
-      .from('blocks')
-      .update({ content })
-      .eq('id', blockId);
-  };
-
-  // Update block settings
   const handleBlockUpdate = async (blockId: string, updates: Partial<Block>) => {
-    const updatedBlock = blocks.find((b) => b.id === blockId);
-    if (!updatedBlock) return;
-
-    const newBlock = { ...updatedBlock, ...updates };
-    setBlocks(blocks.map((b) => b.id === blockId ? newBlock : b));
-    
-    if (selectedBlock?.id === blockId) {
-      setSelectedBlock(newBlock);
-    }
-
-    const { animation_type, layout_settings } = updates;
-    const dbUpdates: Record<string, unknown> = {};
-    if (animation_type !== undefined) dbUpdates.animation_type = animation_type;
-    if (layout_settings !== undefined) dbUpdates.layout_settings = layout_settings;
-
-    await supabase
+    const { error } = await supabase
       .from('blocks')
-      .update(dbUpdates)
+      .update(updates)
       .eq('id', blockId);
+
+    if (error) {
+      toast.error('Kunde inte uppdatera block');
+      console.error(error);
+    } else {
+      setBlocks((prev) =>
+        prev.map((b) => (b.id === blockId ? { ...b, ...updates } : b))
+      );
+    }
   };
 
   // Delete block
   const handleBlockDelete = async (blockId: string) => {
-    const { error } = await supabase
-      .from('blocks')
-      .delete()
-      .eq('id', blockId);
+    const block = blocks.find((b) => b.id === blockId);
+    if (!block) return;
+
+    const { error } = await supabase.from('blocks').delete().eq('id', blockId);
 
     if (error) {
       toast.error('Kunde inte ta bort block');
+      console.error(error);
     } else {
-      setBlocks(blocks.filter((b) => b.id !== blockId));
-      if (selectedBlock?.id === blockId) {
-        setSelectedBlock(null);
+      // Update positions
+      const blocksAfter = blocks.filter((b) => b.position > block.position);
+      for (const b of blocksAfter) {
+        await supabase
+          .from('blocks')
+          .update({ position: b.position - 1 })
+          .eq('id', b.id);
       }
+
+      setBlocks((prev) =>
+        prev
+          .filter((b) => b.id !== blockId)
+          .map((b) =>
+            b.position > block.position ? { ...b, position: b.position - 1 } : b
+          )
+      );
+      setSelectedBlockId(null);
     }
   };
 
-  // Handle image upload
+  // Move block
+  const handleBlockMove = async (blockId: string, direction: 'up' | 'down') => {
+    const blockIndex = blocks.findIndex((b) => b.id === blockId);
+    if (blockIndex === -1) return;
+
+    const targetIndex = direction === 'up' ? blockIndex - 1 : blockIndex + 1;
+    if (targetIndex < 0 || targetIndex >= blocks.length) return;
+
+    const block = blocks[blockIndex];
+    const targetBlock = blocks[targetIndex];
+
+    // Swap positions in database
+    await Promise.all([
+      supabase.from('blocks').update({ position: targetBlock.position }).eq('id', block.id),
+      supabase.from('blocks').update({ position: block.position }).eq('id', targetBlock.id),
+    ]);
+
+    // Update local state
+    setBlocks((prev) => {
+      const updated = [...prev];
+      const tempPos = updated[blockIndex].position;
+      updated[blockIndex] = { ...updated[blockIndex], position: updated[targetIndex].position };
+      updated[targetIndex] = { ...updated[targetIndex], position: tempPos };
+      return updated.sort((a, b) => a.position - b.position);
+    });
+  };
+
+  // Image upload
   const handleImageUpload = async (blockId: string, file: File) => {
-    if (!user) {
-      toast.error('Du måste vara inloggad');
-      return;
-    }
-
-    setUploading(true);
-
     const fileExt = file.name.split('.').pop();
-    const fileName = `${user.id}/${blockId}-${Date.now()}.${fileExt}`;
+    const fileName = `${crypto.randomUUID()}.${fileExt}`;
+    const filePath = `${user?.id}/${fileName}`;
 
     const { error: uploadError } = await supabase.storage
       .from('media')
-      .upload(fileName, file);
+      .upload(filePath, file);
 
     if (uploadError) {
-      toast.error('Kunde inte ladda upp bilden');
-      setUploading(false);
+      toast.error('Kunde inte ladda upp bild');
+      console.error(uploadError);
       return;
     }
 
-    const { data: { publicUrl } } = supabase.storage
-      .from('media')
-      .getPublicUrl(fileName);
+    const { data: urlData } = supabase.storage.from('media').getPublicUrl(filePath);
 
-    // Update block content with the image URL
-    await handleBlockContentUpdate(blockId, { src: publicUrl, alt: file.name } as unknown as Json);
-    
-    setUploading(false);
-    toast.success('Bild uppladdad!');
+    await handleBlockUpdate(blockId, {
+      content: { src: urlData.publicUrl, alt: file.name } as unknown as Json,
+    });
   };
 
-  // Handle block select
-  const handleBlockSelect = (block: Block | null) => {
-    setSelectedBlock(block);
-  };
+  const selectedBlock = blocks.find((b) => b.id === selectedBlockId) || null;
 
-  if (loading) {
+  if (loading || authLoading) {
     return (
-      <div className="h-screen flex flex-col">
-        <div className="h-14 border-b bg-card flex items-center px-4">
-          <Skeleton className="h-6 w-48" />
+      <div className="h-screen flex">
+        <Skeleton className="w-64 h-full" />
+        <div className="flex-1 p-8">
+          <Skeleton className="h-12 w-full mb-4" />
+          <Skeleton className="h-96 w-full" />
         </div>
-        <div className="flex-1 flex">
-          <div className="w-64 border-r p-4">
-            <Skeleton className="h-8 w-full mb-4" />
-            <Skeleton className="h-24 w-full mb-2" />
-            <Skeleton className="h-24 w-full" />
-          </div>
-          <div className="flex-1 p-8">
-            <Skeleton className="h-12 w-3/4 mb-4" />
-            <Skeleton className="h-24 w-full" />
-          </div>
-        </div>
+        <Skeleton className="w-80 h-full" />
       </div>
     );
   }
@@ -416,7 +277,7 @@ export default function Editor() {
   }
 
   return (
-    <div className="h-screen flex flex-col">
+    <div className="h-screen flex flex-col bg-background">
       <EditorHeader
         title={presentation.title}
         presentationId={presentation.id}
@@ -426,41 +287,35 @@ export default function Editor() {
       />
 
       <div className="flex-1 flex overflow-hidden">
-        <SlidePanel
-          slides={slides}
-          activeSlideId={activeSlide?.id || null}
-          onSlideSelect={setActiveSlide}
-          onSlideCreate={handleSlideCreate}
-          onSlideDuplicate={handleSlideDuplicate}
-          onSlideDelete={handleSlideDelete}
-          onSlideReorder={setSlides}
+        <WaypointSidebar
+          waypoints={waypoints}
+          onWaypointClick={(blockId) => {
+            setSelectedBlockId(blockId);
+            document.getElementById(`block-${blockId}`)?.scrollIntoView({
+              behavior: 'smooth',
+              block: 'center',
+            });
+          }}
         />
 
-        <div 
-          className="flex-1 flex flex-col"
-          style={{
-            backgroundColor: activeSlide?.background_type === 'color' 
-              ? activeSlide.background_value 
-              : undefined,
-          }}
-        >
-          <BlockEditor
-            blocks={blocks}
-            selectedBlockId={selectedBlock?.id || null}
-            uploading={uploading}
-            onBlockCreate={handleBlockCreate}
-            onBlockUpdate={handleBlockContentUpdate}
-            onBlockDelete={handleBlockDelete}
-            onBlockSelect={handleBlockSelect}
-            onImageUpload={handleImageUpload}
-          />
-        </div>
-
-        <SettingsPanel
-          slide={activeSlide}
-          selectedBlock={selectedBlock}
-          onSlideUpdate={handleSlideUpdate}
+        <BlockCanvas
+          blocks={blocks}
+          selectedBlockId={selectedBlockId}
+          onBlockSelect={setSelectedBlockId}
+          onBlockCreate={handleBlockCreate}
           onBlockUpdate={handleBlockUpdate}
+          onBlockDelete={handleBlockDelete}
+          onBlockMove={handleBlockMove}
+          onImageUpload={handleImageUpload}
+        />
+
+        <BlockSettings
+          block={selectedBlock}
+          onUpdate={(updates) => {
+            if (selectedBlockId) {
+              handleBlockUpdate(selectedBlockId, updates);
+            }
+          }}
         />
       </div>
     </div>

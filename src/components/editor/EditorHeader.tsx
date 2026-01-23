@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { ArrowLeft, Play, Save, Check, Loader2 } from 'lucide-react';
+import { ArrowLeft, Check, Loader2, Play } from 'lucide-react';
 
 interface EditorHeaderProps {
   title: string;
@@ -23,73 +23,67 @@ export function EditorHeader({
   const [isEditing, setIsEditing] = useState(false);
   const [editTitle, setEditTitle] = useState(title);
 
-  const handleTitleSave = () => {
-    onTitleChange(editTitle);
+  const handleTitleSubmit = () => {
+    if (editTitle.trim()) {
+      onTitleChange(editTitle.trim());
+    } else {
+      setEditTitle(title);
+    }
     setIsEditing(false);
   };
 
   return (
-    <header className="h-14 border-b bg-card/50 backdrop-blur-sm flex items-center px-4 gap-4">
-      {/* Back button */}
-      <Button 
-        variant="ghost" 
+    <header className="h-14 border-b border-border bg-card flex items-center px-4 gap-4">
+      <Button
+        variant="ghost"
         size="icon"
         onClick={() => navigate('/')}
+        title="Tillbaka till dashboard"
       >
-        <ArrowLeft className="h-4 w-4" />
+        <ArrowLeft className="h-5 w-5" />
       </Button>
 
-      {/* Title */}
-      {isEditing ? (
-        <div className="flex items-center gap-2">
+      <div className="flex-1">
+        {isEditing ? (
           <Input
             value={editTitle}
             onChange={(e) => setEditTitle(e.target.value)}
-            className="h-8 w-64"
+            onBlur={handleTitleSubmit}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleTitleSubmit();
+              if (e.key === 'Escape') {
+                setEditTitle(title);
+                setIsEditing(false);
+              }
+            }}
+            className="max-w-xs h-8 text-lg font-medium"
             autoFocus
-            onKeyDown={(e) => e.key === 'Enter' && handleTitleSave()}
-            onBlur={handleTitleSave}
           />
-          <Button size="icon" variant="ghost" className="h-8 w-8" onClick={handleTitleSave}>
-            <Check className="h-4 w-4" />
-          </Button>
-        </div>
-      ) : (
-        <button
-          className="font-medium hover:text-primary transition-colors"
-          onClick={() => {
-            setEditTitle(title);
-            setIsEditing(true);
-          }}
-        >
-          {title}
-        </button>
-      )}
+        ) : (
+          <button
+            onClick={() => {
+              setEditTitle(title);
+              setIsEditing(true);
+            }}
+            className="text-lg font-medium hover:text-primary transition-colors"
+          >
+            {title}
+          </button>
+        )}
+      </div>
 
-      <div className="flex-1" />
-
-      {/* Actions */}
       <div className="flex items-center gap-2">
-        <Button 
-          variant="outline" 
-          size="sm" 
-          className="gap-2"
-          onClick={onSave}
-          disabled={saving}
-        >
+        <Button variant="outline" size="sm" onClick={onSave} disabled={saving}>
           {saving ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
+            <Loader2 className="h-4 w-4 animate-spin mr-2" />
           ) : (
-            <Save className="h-4 w-4" />
+            <Check className="h-4 w-4 mr-2" />
           )}
           Spara
         </Button>
-        <Button 
-          size="sm" 
-          className="gap-2"
-          onClick={() => navigate(`/present/${presentationId}`)}
-        >
-          <Play className="h-4 w-4" />
+
+        <Button size="sm" onClick={() => navigate(`/present/${presentationId}`)}>
+          <Play className="h-4 w-4 mr-2" />
           Presentera
         </Button>
       </div>
