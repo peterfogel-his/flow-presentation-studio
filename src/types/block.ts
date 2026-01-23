@@ -101,7 +101,7 @@ export function getLayoutSettings(block: Block): LayoutSettings {
 export function getAnimationSettings(block: Block): AnimationSettings {
   const settings = block.animation_settings as Record<string, unknown> | null;
   return {
-    type: 'none',
+    type: 'slide-up',
     delay: 0,
     duration: 500,
     ...settings,

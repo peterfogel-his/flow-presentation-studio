@@ -219,7 +219,7 @@ function PresentBlock({ block, background }: { block: Block; background?: string
   const [isVisible, setIsVisible] = useState(false);
   const blockRef = useRef<HTMLDivElement>(null);
 
-  const animation = (block.animation_settings || { type: 'none', delay: 0, duration: 500 }) as unknown as AnimationSettings;
+  const animation = (block.animation_settings || { type: 'slide-up', delay: 0, duration: 500 }) as unknown as AnimationSettings;
   const layout = (block.layout_settings || { alignment: 'center', width: '100%' }) as unknown as LayoutSettings;
 
   // Intersection observer for animations
@@ -241,7 +241,10 @@ function PresentBlock({ block, background }: { block: Block; background?: string
   }, []);
 
   const getAnimationClass = () => {
-    if (!isVisible || animation.type === 'none') return 'opacity-0';
+    // No animation = show immediately
+    if (animation.type === 'none') return 'opacity-100';
+    // Not visible yet = hide until intersection observer triggers
+    if (!isVisible) return 'opacity-0';
     switch (animation.type) {
       case 'fade':
         return 'animate-fade-scale-in';
@@ -256,7 +259,7 @@ function PresentBlock({ block, background }: { block: Block; background?: string
       case 'ken-burns':
         return 'animate-ken-burns';
       default:
-        return '';
+        return 'opacity-100';
     }
   };
 
