@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { X, ChevronLeft, ChevronRight, Maximize, Minimize } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { AnimatedBlock } from '@/components/presentation/AnimatedBlock';
 import type { Slide, Block, BlockContent, LayoutSettings } from '@/types/presentation';
 
 export default function Present() {
@@ -15,6 +16,9 @@ export default function Present() {
   const [blocks, setBlocks] = useState<Record<string, Block[]>>({});
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [loading, setLoading] = useState(true);
+  
+  const containerRef = useRef<HTMLDivElement>(null);
+  const slideRefs = useRef<(HTMLElement | null)[]>([]);
 
   // Fetch slides and blocks
   useEffect(() => {
@@ -53,6 +57,31 @@ export default function Present() {
 
     fetchData();
   }, [id]);
+
+  // Track current slide via intersection observer
+  useEffect(() => {
+    if (slides.length === 0) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            const index = slideRefs.current.findIndex((ref) => ref === entry.target);
+            if (index !== -1) {
+              setCurrentIndex(index);
+            }
+          }
+        });
+      },
+      { threshold: 0.6 }
+    );
+
+    slideRefs.current.forEach((ref) => {
+      if (ref) observer.observe(ref);
+    });
+
+    return () => observer.disconnect();
+  }, [slides]);
 
   // Keyboard navigation
   useEffect(() => {
@@ -96,13 +125,22 @@ export default function Present() {
     return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
   }, []);
 
+  const scrollToSlide = useCallback((index: number) => {
+    const targetRef = slideRefs.current[index];
+    if (targetRef) {
+      targetRef.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, []);
+
   const goNext = useCallback(() => {
-    setCurrentIndex((i) => Math.min(i + 1, slides.length - 1));
-  }, [slides.length]);
+    const nextIndex = Math.min(currentIndex + 1, slides.length - 1);
+    scrollToSlide(nextIndex);
+  }, [currentIndex, slides.length, scrollToSlide]);
 
   const goPrev = useCallback(() => {
-    setCurrentIndex((i) => Math.max(i - 1, 0));
-  }, []);
+    const prevIndex = Math.max(currentIndex - 1, 0);
+    scrollToSlide(prevIndex);
+  }, [currentIndex, scrollToSlide]);
 
   const toggleFullscreen = useCallback(() => {
     if (document.fullscreenElement) {
@@ -112,20 +150,22 @@ export default function Present() {
     }
   }, []);
 
-  const getAnimationClass = (animationType: string) => {
-    switch (animationType) {
-      case 'fade':
-        return 'animate-fade-scale-in';
-      case 'slide-left':
-        return 'animate-slide-in-left';
-      case 'slide-right':
-        return 'animate-slide-in-right';
-      case 'slide-up':
-        return 'animate-slide-in-up';
-      case 'ken-burns':
-        return 'animate-ken-burns';
+  const getBackgroundStyle = (slide: Slide): React.CSSProperties => {
+    switch (slide.background_type) {
+      case 'color':
+        return { backgroundColor: slide.background_value || undefined };
+      case 'image':
+        return {
+          backgroundImage: slide.background_value ? `url(${slide.background_value})` : undefined,
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+        };
+      case 'gradient':
+        return {
+          backgroundImage: slide.background_value || 'linear-gradient(to bottom, #4f46e5, #7c3aed)',
+        };
       default:
-        return '';
+        return { backgroundColor: 'hsl(var(--background))' };
     }
   };
 
@@ -144,7 +184,6 @@ export default function Present() {
   const renderBlock = (block: Block) => {
     const content = getContent(block);
     const layout = getLayoutSettings(block);
-    const animationClass = getAnimationClass(block.animation_type);
     const alignmentClass = {
       left: 'text-left',
       center: 'text-center',
@@ -158,7 +197,6 @@ export default function Present() {
         return (
           <HeadingTag 
             className={cn(
-              animationClass,
               alignmentClass,
               level === 1 && 'text-6xl font-bold mb-8',
               level === 2 && 'text-4xl font-semibold mb-6',
@@ -171,21 +209,18 @@ export default function Present() {
 
       case 'text':
         return (
-          <p className={cn('text-xl leading-relaxed mb-4', animationClass, alignmentClass)}>
+          <p className={cn('text-xl leading-relaxed mb-4', alignmentClass)}>
             {content.text}
           </p>
         );
 
       case 'image':
         return content.src ? (
-          <div className={cn('mb-6', animationClass, alignmentClass)}>
+          <div className={cn('mb-6', alignmentClass)}>
             <img
               src={content.src}
               alt={content.alt || ''}
-              className={cn(
-                'max-w-full max-h-[60vh] rounded-lg mx-auto',
-                block.animation_type === 'ken-burns' && 'animate-ken-burns'
-              )}
+              className="max-w-full max-h-[60vh] rounded-lg mx-auto"
             />
           </div>
         ) : null;
@@ -214,25 +249,10 @@ export default function Present() {
     );
   }
 
-  const currentSlide = slides[currentIndex];
-  const currentBlocks = blocks[currentSlide.id] || [];
-
   return (
-    <div 
-      className="fixed inset-0 bg-background"
-      style={{
-        backgroundColor: currentSlide.background_type === 'color' 
-          ? currentSlide.background_value 
-          : undefined,
-        backgroundImage: currentSlide.background_type === 'image' 
-          ? `url(${currentSlide.background_value})` 
-          : undefined,
-        backgroundSize: 'cover',
-        backgroundPosition: 'center',
-      }}
-    >
+    <div className="fixed inset-0 bg-background">
       {/* Controls overlay */}
-      <div className="absolute top-4 right-4 z-50 flex gap-2 opacity-0 hover:opacity-100 transition-opacity">
+      <div className="fixed top-4 right-4 z-50 flex gap-2 opacity-0 hover:opacity-100 transition-opacity">
         <Button variant="secondary" size="icon" onClick={toggleFullscreen}>
           {isFullscreen ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
         </Button>
@@ -244,7 +264,7 @@ export default function Present() {
       {/* Navigation arrows */}
       <button
         className={cn(
-          'absolute left-4 top-1/2 -translate-y-1/2 z-50 p-4 rounded-full',
+          'fixed left-4 top-1/2 -translate-y-1/2 z-50 p-4 rounded-full',
           'bg-background/20 hover:bg-background/40 transition-all',
           'opacity-0 hover:opacity-100',
           currentIndex === 0 && 'invisible'
@@ -256,7 +276,7 @@ export default function Present() {
 
       <button
         className={cn(
-          'absolute right-4 top-1/2 -translate-y-1/2 z-50 p-4 rounded-full',
+          'fixed right-4 top-1/2 -translate-y-1/2 z-50 p-4 rounded-full',
           'bg-background/20 hover:bg-background/40 transition-all',
           'opacity-0 hover:opacity-100',
           currentIndex === slides.length - 1 && 'invisible'
@@ -266,36 +286,40 @@ export default function Present() {
         <ChevronRight className="h-8 w-8" />
       </button>
 
-      {/* Slide content */}
+      {/* Scroll container with all slides */}
       <div 
-        key={currentSlide.id}
-        className={cn(
-          'h-full flex flex-col items-center justify-center p-16',
-          getAnimationClass(currentSlide.transition_type)
-        )}
+        ref={containerRef}
+        className="h-screen overflow-y-scroll snap-y snap-mandatory scrollbar-hide"
+        style={{ scrollBehavior: 'smooth' }}
       >
-        <div className="max-w-4xl w-full">
-          {currentBlocks.map((block, index) => {
-            const hasAnimation = block.animation_type && block.animation_type !== 'none';
-            return (
-              <div 
-                key={block.id}
-                style={hasAnimation ? { 
-                  animationDelay: `${index * 100}ms`,
-                  opacity: 0,
-                  animationFillMode: 'forwards'
-                } : undefined}
-                className={getAnimationClass(block.animation_type)}
-              >
-                {renderBlock(block)}
+        {slides.map((slide, slideIndex) => {
+          const slideBlocks = blocks[slide.id] || [];
+          
+          return (
+            <section
+              key={slide.id}
+              ref={(el) => { slideRefs.current[slideIndex] = el; }}
+              className="min-h-screen snap-start snap-always flex items-center justify-center relative"
+              style={getBackgroundStyle(slide)}
+            >
+              <div className="max-w-4xl w-full px-8 py-16">
+                {slideBlocks.map((block, blockIndex) => (
+                  <AnimatedBlock
+                    key={block.id}
+                    animationType={block.animation_type}
+                    delay={blockIndex * 100}
+                  >
+                    {renderBlock(block)}
+                  </AnimatedBlock>
+                ))}
               </div>
-            );
-          })}
-        </div>
+            </section>
+          );
+        })}
       </div>
 
       {/* Progress indicator */}
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2">
+      <div className="fixed bottom-4 left-1/2 -translate-x-1/2 flex gap-2 z-50">
         {slides.map((_, index) => (
           <button
             key={index}
@@ -305,15 +329,26 @@ export default function Present() {
                 ? 'bg-primary w-6' 
                 : 'bg-primary/30 hover:bg-primary/50'
             )}
-            onClick={() => setCurrentIndex(index)}
+            onClick={() => scrollToSlide(index)}
           />
         ))}
       </div>
 
       {/* Slide counter */}
-      <div className="absolute bottom-4 right-4 text-sm text-muted-foreground">
+      <div className="fixed bottom-4 right-4 text-sm text-muted-foreground z-50">
         {currentIndex + 1} / {slides.length}
       </div>
+
+      {/* Hide scrollbar */}
+      <style>{`
+        .scrollbar-hide::-webkit-scrollbar {
+          display: none;
+        }
+        .scrollbar-hide {
+          -ms-overflow-style: none;
+          scrollbar-width: none;
+        }
+      `}</style>
     </div>
   );
 }
