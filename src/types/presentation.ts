@@ -58,6 +58,8 @@ export interface LayoutSettings {
   // Parallax and depth settings
   parallaxSpeed?: number; // 0 = static, 0.5 = slow, 1 = normal
   zIndex?: number; // Layer depth 1-5
+  // Text contrast background
+  showTextBackground?: boolean;
 }
 
 export interface MediaAsset {
