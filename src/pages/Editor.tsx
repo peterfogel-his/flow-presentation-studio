@@ -23,6 +23,7 @@ export default function Editor() {
   const [selectedBlock, setSelectedBlock] = useState<Block | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
   // Fetch presentation data
   useEffect(() => {
@@ -68,6 +69,7 @@ export default function Editor() {
   useEffect(() => {
     if (!activeSlide) {
       setBlocks([]);
+      setSelectedBlock(null);
       return;
     }
 
@@ -79,6 +81,7 @@ export default function Editor() {
         .order('position');
 
       setBlocks(data || []);
+      setSelectedBlock(null);
     };
 
     fetchBlocks();
@@ -108,10 +111,22 @@ export default function Editor() {
   }, [presentation]);
 
   // Create slide
-  const handleSlideCreate = async () => {
+  const handleSlideCreate = async (afterPosition?: number) => {
     if (!id) return;
 
-    const newPosition = slides.length;
+    const newPosition = afterPosition !== undefined ? afterPosition + 1 : slides.length;
+    
+    // If inserting in middle, update positions of subsequent slides
+    if (afterPosition !== undefined && afterPosition < slides.length - 1) {
+      const slidesToUpdate = slides.filter(s => s.position > afterPosition);
+      for (const slide of slidesToUpdate) {
+        await supabase
+          .from('slides')
+          .update({ position: slide.position + 1 })
+          .eq('id', slide.id);
+      }
+    }
+
     const { data, error } = await supabase
       .from('slides')
       .insert({
@@ -125,9 +140,85 @@ export default function Editor() {
     if (error) {
       toast.error('Kunde inte skapa stopp');
     } else if (data) {
-      setSlides([...slides, data]);
+      // Refetch all slides to get correct positions
+      const { data: refreshedSlides } = await supabase
+        .from('slides')
+        .select('*')
+        .eq('presentation_id', id)
+        .order('position');
+      
+      setSlides(refreshedSlides || []);
       setActiveSlide(data);
     }
+  };
+
+  // Duplicate slide
+  const handleSlideDuplicate = async (slide: Slide) => {
+    if (!id) return;
+
+    // Create new slide after the current one
+    const newPosition = slide.position + 1;
+    
+    // Update positions of subsequent slides
+    const slidesToUpdate = slides.filter(s => s.position > slide.position);
+    for (const s of slidesToUpdate) {
+      await supabase
+        .from('slides')
+        .update({ position: s.position + 1 })
+        .eq('id', s.id);
+    }
+
+    // Create the new slide
+    const { data: newSlide, error: slideError } = await supabase
+      .from('slides')
+      .insert({
+        presentation_id: id,
+        position: newPosition,
+        title: slide.title ? `${slide.title} (kopia)` : `Stopp ${newPosition + 1}`,
+        background_type: slide.background_type,
+        background_value: slide.background_value,
+        transition_type: slide.transition_type,
+        settings: slide.settings,
+      })
+      .select()
+      .single();
+
+    if (slideError || !newSlide) {
+      toast.error('Kunde inte duplicera stopp');
+      return;
+    }
+
+    // Fetch blocks from original slide and copy them
+    const { data: originalBlocks } = await supabase
+      .from('blocks')
+      .select('*')
+      .eq('slide_id', slide.id)
+      .order('position');
+
+    if (originalBlocks && originalBlocks.length > 0) {
+      const blocksToInsert = originalBlocks.map(block => ({
+        slide_id: newSlide.id,
+        type: block.type,
+        content: block.content,
+        position: block.position,
+        animation_type: block.animation_type,
+        animation_settings: block.animation_settings,
+        layout_settings: block.layout_settings,
+      }));
+
+      await supabase.from('blocks').insert(blocksToInsert);
+    }
+
+    // Refetch all slides
+    const { data: refreshedSlides } = await supabase
+      .from('slides')
+      .select('*')
+      .eq('presentation_id', id)
+      .order('position');
+    
+    setSlides(refreshedSlides || []);
+    setActiveSlide(newSlide);
+    toast.success('Stopp duplicerat!');
   };
 
   // Delete slide
@@ -201,12 +292,19 @@ export default function Editor() {
       toast.error('Kunde inte skapa block');
     } else if (data) {
       setBlocks([...blocks, data]);
+      setSelectedBlock(data);
     }
   };
 
   // Update block content
   const handleBlockContentUpdate = async (blockId: string, content: Json) => {
-    setBlocks(blocks.map((b) => b.id === blockId ? { ...b, content } : b));
+    const updatedBlocks = blocks.map((b) => b.id === blockId ? { ...b, content } : b);
+    setBlocks(updatedBlocks);
+    
+    // Update selected block if it's the one being edited
+    if (selectedBlock?.id === blockId) {
+      setSelectedBlock({ ...selectedBlock, content });
+    }
 
     await supabase
       .from('blocks')
@@ -254,6 +352,44 @@ export default function Editor() {
     }
   };
 
+  // Handle image upload
+  const handleImageUpload = async (blockId: string, file: File) => {
+    if (!user) {
+      toast.error('Du måste vara inloggad');
+      return;
+    }
+
+    setUploading(true);
+
+    const fileExt = file.name.split('.').pop();
+    const fileName = `${user.id}/${blockId}-${Date.now()}.${fileExt}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from('media')
+      .upload(fileName, file);
+
+    if (uploadError) {
+      toast.error('Kunde inte ladda upp bilden');
+      setUploading(false);
+      return;
+    }
+
+    const { data: { publicUrl } } = supabase.storage
+      .from('media')
+      .getPublicUrl(fileName);
+
+    // Update block content with the image URL
+    await handleBlockContentUpdate(blockId, { src: publicUrl, alt: file.name } as unknown as Json);
+    
+    setUploading(false);
+    toast.success('Bild uppladdad!');
+  };
+
+  // Handle block select
+  const handleBlockSelect = (block: Block | null) => {
+    setSelectedBlock(block);
+  };
+
   if (loading) {
     return (
       <div className="h-screen flex flex-col">
@@ -295,6 +431,7 @@ export default function Editor() {
           activeSlideId={activeSlide?.id || null}
           onSlideSelect={setActiveSlide}
           onSlideCreate={handleSlideCreate}
+          onSlideDuplicate={handleSlideDuplicate}
           onSlideDelete={handleSlideDelete}
           onSlideReorder={setSlides}
         />
@@ -309,10 +446,13 @@ export default function Editor() {
         >
           <BlockEditor
             blocks={blocks}
+            selectedBlockId={selectedBlock?.id || null}
+            uploading={uploading}
             onBlockCreate={handleBlockCreate}
             onBlockUpdate={handleBlockContentUpdate}
             onBlockDelete={handleBlockDelete}
-            onBlockSettings={setSelectedBlock}
+            onBlockSelect={handleBlockSelect}
+            onImageUpload={handleImageUpload}
           />
         </div>
 
