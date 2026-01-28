@@ -14,7 +14,22 @@ import type {
   ListContent,
   AnimationSettings,
   LayoutSettings,
+  NavigationMode,
 } from '@/types/block';
+
+// Types for slide structure with pause support
+type SlideStep = {
+  blocks: Block[];
+  pauseIndex: number;
+};
+
+type Slide = {
+  waypoint: Waypoint;
+  startPosition: number;
+  endPosition: number;
+  steps: SlideStep[];
+  background?: BackgroundContent;
+};
 
 export default function Present() {
   const { id } = useParams<{ id: string }>();
@@ -24,7 +39,13 @@ export default function Present() {
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [loading, setLoading] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [currentWaypointIndex, setCurrentWaypointIndex] = useState(0);
+  const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
+  const [currentStepIndex, setCurrentStepIndex] = useState(0);
+  
+  // Wave transition state
+  const [isTransitioning, setIsTransitioning] = useState(false);
+  const [transitionDirection, setTransitionDirection] = useState<'forward' | 'backward'>('forward');
+  const [previousSlideIndex, setPreviousSlideIndex] = useState<number | null>(null);
 
   // Fetch blocks
   useEffect(() => {
@@ -48,37 +69,21 @@ export default function Present() {
     fetchBlocks();
   }, [id]);
 
-  // Get waypoints
-  const waypoints: Waypoint[] = useMemo(() => {
-    const wps = blocks
-      .filter((b) => b.is_waypoint)
-      .map((b) => ({
-        blockId: b.id,
-        title: b.waypoint_title || `Block ${b.position + 1}`,
-        position: b.position,
-      }))
-      .sort((a, b) => a.position - b.position);
-
-    // Ensure we always have at least one waypoint
-    if (wps.length === 0 && blocks.length > 0) {
-      wps.push({ blockId: blocks[0].id, title: 'Start', position: blocks[0].position });
-    }
-
-    return wps;
-  }, [blocks]);
-
-  type Slide = {
-    waypoint: Waypoint;
-    startPosition: number;
-    endPosition: number; // inclusive
-    blocks: Block[];
-    background?: BackgroundContent;
-  };
-
+  // Build slides with steps (pause support)
   const slides: Slide[] = useMemo(() => {
-    if (blocks.length === 0 || waypoints.length === 0) return [];
+    if (blocks.length === 0) return [];
 
     const sorted = [...blocks].sort((a, b) => a.position - b.position);
+    
+    // Find all stops (blocks with navigation_mode === 'stop' or is_waypoint for backwards compat)
+    const stopBlocks = sorted.filter(b => 
+      b.navigation_mode === 'stop' || (b.is_waypoint && !b.navigation_mode)
+    );
+    
+    // If no stops, create one from the first block
+    if (stopBlocks.length === 0 && sorted.length > 0) {
+      stopBlocks.push(sorted[0]);
+    }
 
     const getLastBackgroundUpTo = (pos: number): BackgroundContent | undefined => {
       const bg = sorted
@@ -87,19 +92,106 @@ export default function Present() {
       return bg ? (bg.content as unknown as BackgroundContent) : undefined;
     };
 
-    return waypoints.map((wp, idx) => {
-      const start = wp.position;
-      const end = idx < waypoints.length - 1 ? waypoints[idx + 1].position - 1 : sorted[sorted.length - 1].position;
-      const between = sorted.filter((b) => b.position >= start && b.position <= end && b.type !== 'background');
+    return stopBlocks.map((stopBlock, idx) => {
+      const start = stopBlock.position;
+      const end = idx < stopBlocks.length - 1 
+        ? stopBlocks[idx + 1].position - 1 
+        : sorted[sorted.length - 1].position;
+      
+      // Get all content blocks between this stop and the next
+      const sectionBlocks = sorted.filter(
+        (b) => b.position >= start && b.position <= end && b.type !== 'background'
+      );
+
+      // Group blocks into steps based on pauses
+      const steps: SlideStep[] = [];
+      let currentStepBlocks: Block[] = [];
+      let pauseIndex = 0;
+
+      sectionBlocks.forEach((block, i) => {
+        // If this block is a pause, start a new step
+        if (block.navigation_mode === 'pause' && i > 0) {
+          if (currentStepBlocks.length > 0) {
+            steps.push({ blocks: currentStepBlocks, pauseIndex });
+            pauseIndex++;
+          }
+          currentStepBlocks = [block];
+        } else {
+          currentStepBlocks.push(block);
+        }
+      });
+
+      // Push the last step
+      if (currentStepBlocks.length > 0) {
+        steps.push({ blocks: currentStepBlocks, pauseIndex });
+      }
+
+      // Ensure at least one step exists
+      if (steps.length === 0) {
+        steps.push({ blocks: [], pauseIndex: 0 });
+      }
+
       return {
-        waypoint: wp,
+        waypoint: {
+          blockId: stopBlock.id,
+          title: stopBlock.waypoint_title || `Stopp ${idx + 1}`,
+          position: stopBlock.position,
+        },
         startPosition: start,
         endPosition: end,
-        blocks: between,
+        steps,
         background: getLastBackgroundUpTo(start),
       };
     });
-  }, [blocks, waypoints]);
+  }, [blocks]);
+
+  // Navigation functions
+  const goNext = () => {
+    if (slides.length === 0 || isTransitioning) return;
+    
+    const currentSlide = slides[currentSlideIndex];
+    
+    // Check if there are more steps in current slide
+    if (currentStepIndex < currentSlide.steps.length - 1) {
+      // Go to next step (pause reveal) - no wave transition
+      setCurrentStepIndex(s => s + 1);
+    } else if (currentSlideIndex < slides.length - 1) {
+      // Go to next slide with wave transition
+      startWaveTransition(currentSlideIndex + 1, 'forward');
+    }
+  };
+
+  const goPrev = () => {
+    if (slides.length === 0 || isTransitioning) return;
+    
+    // Check if we can go back a step
+    if (currentStepIndex > 0) {
+      setCurrentStepIndex(s => s - 1);
+    } else if (currentSlideIndex > 0) {
+      // Go to previous slide with wave transition
+      startWaveTransition(currentSlideIndex - 1, 'backward');
+    }
+  };
+
+  const goToSlide = (index: number) => {
+    if (isTransitioning || index === currentSlideIndex) return;
+    const direction = index > currentSlideIndex ? 'forward' : 'backward';
+    startWaveTransition(index, direction);
+  };
+
+  const startWaveTransition = (newIndex: number, direction: 'forward' | 'backward') => {
+    setPreviousSlideIndex(currentSlideIndex);
+    setTransitionDirection(direction);
+    setIsTransitioning(true);
+    setCurrentSlideIndex(newIndex);
+    setCurrentStepIndex(0); // Reset step index for new slide
+
+    // End transition after animation completes
+    setTimeout(() => {
+      setIsTransitioning(false);
+      setPreviousSlideIndex(null);
+    }, 1200); // Match animation duration
+  };
 
   // Keyboard navigation
   useEffect(() => {
@@ -114,19 +206,19 @@ export default function Present() {
       if (e.key === 'f' || e.key === 'F') {
         toggleFullscreen();
       }
-      if (e.key === 'ArrowDown' || e.key === ' ' || e.key === 'PageDown') {
+      if (e.key === 'ArrowDown' || e.key === ' ' || e.key === 'PageDown' || e.key === 'ArrowRight') {
         e.preventDefault();
-        goToNextWaypoint();
+        goNext();
       }
-      if (e.key === 'ArrowUp' || e.key === 'PageUp') {
+      if (e.key === 'ArrowUp' || e.key === 'PageUp' || e.key === 'ArrowLeft') {
         e.preventDefault();
-        goToPrevWaypoint();
+        goPrev();
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isFullscreen, waypoints, currentWaypointIndex]);
+  }, [isFullscreen, slides, currentSlideIndex, currentStepIndex, isTransitioning]);
 
   // Fullscreen change listener
   useEffect(() => {
@@ -145,25 +237,24 @@ export default function Present() {
     }
   };
 
-  const goToNextWaypoint = () => {
-    if (currentWaypointIndex < waypoints.length - 1) {
-      setCurrentWaypointIndex((i) => i + 1);
-    }
-  };
-
-  const goToPrevWaypoint = () => {
-    if (currentWaypointIndex > 0) {
-      setCurrentWaypointIndex((i) => i - 1);
-    }
-  };
-
-  // Clamp index if waypoints/slides change
+  // Clamp index if slides change
   useEffect(() => {
     if (slides.length === 0) return;
-    setCurrentWaypointIndex((i) => Math.min(i, slides.length - 1));
+    setCurrentSlideIndex((i) => Math.min(i, slides.length - 1));
   }, [slides.length]);
 
-  const currentSlide = slides[currentWaypointIndex];
+  const currentSlide = slides[currentSlideIndex];
+  const previousSlide = previousSlideIndex !== null ? slides[previousSlideIndex] : null;
+
+  // Get visible blocks based on current step
+  const visibleBlocks = useMemo(() => {
+    if (!currentSlide) return [];
+    
+    // Show all blocks from step 0 to currentStepIndex
+    return currentSlide.steps
+      .slice(0, currentStepIndex + 1)
+      .flatMap(step => step.blocks);
+  }, [currentSlide, currentStepIndex]);
 
   if (loading) {
     return (
@@ -196,7 +287,70 @@ export default function Present() {
       ref={containerRef}
       className="h-screen bg-background relative overflow-hidden"
     >
-      <SlideBackground background={currentSlide.background} slideKey={currentSlide.waypoint.blockId} />
+      {/* Previous slide (exits during transition) */}
+      {isTransitioning && previousSlide && (
+        <div 
+          className={cn(
+            "absolute inset-0 z-20",
+            transitionDirection === 'forward' ? 'animate-wave-exit-up' : 'animate-wave-exit-down'
+          )}
+        >
+          <SlideBackground background={previousSlide.background} />
+          <EdgeImages 
+            blocks={previousSlide.steps.flatMap(s => s.blocks)} 
+            slideKey={previousSlide.waypoint.blockId} 
+          />
+          <div className="relative z-10 h-full w-full">
+            <div className="h-full w-full flex items-center justify-center px-6 md:px-12">
+              <div className="w-full max-w-5xl space-y-10">
+                {previousSlide.steps.flatMap(s => s.blocks)
+                  .filter(filterNonEdgeBlocks)
+                  .map((block) => <PresentBlock key={block.id} block={block} />)}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Current slide */}
+      <div 
+        className={cn(
+          "absolute inset-0",
+          isTransitioning 
+            ? transitionDirection === 'forward' 
+              ? 'animate-wave-enter-up z-10' 
+              : 'animate-wave-enter-down z-10'
+            : 'z-10'
+        )}
+      >
+        <SlideBackground background={currentSlide.background} />
+
+        {/* Edge images */}
+        <EdgeImages blocks={visibleBlocks} slideKey={currentSlide.waypoint.blockId} />
+
+        {/* Content */}
+        <div className="relative z-10 h-full w-full">
+          <div className="h-full w-full overflow-hidden">
+            <div className="h-full w-full flex items-center justify-center px-6 md:px-12">
+              <div className="w-full max-w-5xl space-y-10">
+                {visibleBlocks.length === 0 ? (
+                  <div className="text-muted-foreground">(Tomt stopp)</div>
+                ) : (
+                  visibleBlocks
+                    .filter(filterNonEdgeBlocks)
+                    .map((block, index) => (
+                      <PresentBlock 
+                        key={block.id} 
+                        block={block} 
+                        shouldAnimate={!isTransitioning}
+                      />
+                    ))
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
 
       {/* Controls */}
       <div className="fixed top-4 right-4 z-50 flex gap-2">
@@ -218,73 +372,69 @@ export default function Present() {
         </Button>
       </div>
 
-      {/* Waypoint progress */}
-      {waypoints.length > 1 && (
+      {/* Slide progress indicator */}
+      {slides.length > 1 && (
         <div className="fixed left-4 top-1/2 -translate-y-1/2 z-50 flex flex-col gap-2">
-          {waypoints.map((wp, index) => (
+          {slides.map((slide, index) => (
             <button
-              key={wp.blockId}
-              onClick={() => {
-                setCurrentWaypointIndex(index);
-              }}
+              key={slide.waypoint.blockId}
+              onClick={() => goToSlide(index)}
               className={cn(
                 'w-3 h-3 rounded-full transition-all',
-                index === currentWaypointIndex
+                index === currentSlideIndex
                   ? 'bg-primary scale-125'
                   : 'bg-muted-foreground/30 hover:bg-muted-foreground/50'
               )}
-              title={wp.title}
+              title={slide.waypoint.title}
             />
           ))}
         </div>
       )}
 
-      {/* Edge images (rendered outside centered container) */}
-      <EdgeImages blocks={currentSlide.blocks} slideKey={currentSlide.waypoint.blockId} />
-
-      {/* Content (one slide = all blocks between two waypoints) */}
-      <div className="relative z-10 h-full w-full">
-        <div className="h-full w-full overflow-hidden">
-          <div
-            key={currentSlide.waypoint.blockId}
-            className="h-full w-full flex items-center justify-center px-6 md:px-12 animate-slide-in-up-slow"
-          >
-            <div className="w-full max-w-5xl space-y-10">
-              {currentSlide.blocks.length === 0 ? (
-                <div className="text-muted-foreground">(Tomt stopp)</div>
-              ) : (
-                currentSlide.blocks
-                  .filter((block) => {
-                    // Filter out edge images as they're rendered separately
-                    if (block.type !== 'image') return true;
-                    const layout = (block.layout_settings || { alignment: 'center', width: '100%', layout: 'contained' }) as unknown as LayoutSettings;
-                    return layout.layout !== 'edge-left' && layout.layout !== 'edge-right' && layout.layout !== 'full-width';
-                  })
-                  .map((block) => <PresentBlock key={block.id} block={block} />)
+      {/* Step indicator (if current slide has multiple steps) */}
+      {currentSlide.steps.length > 1 && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex gap-1">
+          {currentSlide.steps.map((_, index) => (
+            <div
+              key={index}
+              className={cn(
+                'w-2 h-2 rounded-full transition-all',
+                index <= currentStepIndex
+                  ? 'bg-primary'
+                  : 'bg-muted-foreground/30'
               )}
-            </div>
-          </div>
+            />
+          ))}
         </div>
-      </div>
+      )}
 
       {/* Click zones for navigation */}
       <button
         type="button"
-        aria-label="Föregående stopp"
-        onClick={goToPrevWaypoint}
-        className="absolute inset-y-0 left-0 w-1/5 z-20 cursor-pointer bg-transparent"
+        aria-label="Föregående"
+        onClick={goPrev}
+        className="absolute inset-y-0 left-0 w-1/5 z-30 cursor-pointer bg-transparent"
+        disabled={isTransitioning}
       />
       <button
         type="button"
-        aria-label="Nästa stopp"
-        onClick={goToNextWaypoint}
-        className="absolute inset-y-0 right-0 w-1/5 z-20 cursor-pointer bg-transparent"
+        aria-label="Nästa"
+        onClick={goNext}
+        className="absolute inset-y-0 right-0 w-1/5 z-30 cursor-pointer bg-transparent"
+        disabled={isTransitioning}
       />
     </div>
   );
 }
 
-// Edge images component for edge-left, edge-right, full-width layouts
+// Helper to filter out edge images
+function filterNonEdgeBlocks(block: Block): boolean {
+  if (block.type !== 'image') return true;
+  const layout = (block.layout_settings || { alignment: 'center', width: '100%', layout: 'contained' }) as unknown as LayoutSettings;
+  return layout.layout !== 'edge-left' && layout.layout !== 'edge-right' && layout.layout !== 'full-width';
+}
+
+// Edge images component
 function EdgeImages({ blocks, slideKey }: { blocks: Block[]; slideKey: string }) {
   const edgeBlocks = blocks.filter((block) => {
     if (block.type !== 'image') return false;
@@ -356,14 +506,13 @@ function EdgeImages({ blocks, slideKey }: { blocks: Block[]; slideKey: string })
   );
 }
 
-function SlideBackground({ background, slideKey }: { background?: BackgroundContent; slideKey: string }) {
+function SlideBackground({ background }: { background?: BackgroundContent }) {
   if (!background) {
-    return <div key={slideKey} className="absolute inset-0 bg-background animate-bg-crossfade" />;
+    return <div className="absolute inset-0 bg-background" />;
   }
 
   const value = background.value || '#ffffff';
   
-  // Detect if value is a gradient string
   const isGradientValue = 
     value.includes('linear-gradient') || 
     value.includes('radial-gradient') || 
@@ -372,8 +521,7 @@ function SlideBackground({ background, slideKey }: { background?: BackgroundCont
   if (background.type === 'image' && value) {
     return (
       <div
-        key={slideKey}
-        className="absolute inset-0 animate-bg-crossfade animate-ken-burns"
+        className="absolute inset-0 animate-ken-burns"
         style={{
           backgroundImage: `url(${value})`,
           backgroundSize: 'cover',
@@ -386,33 +534,28 @@ function SlideBackground({ background, slideKey }: { background?: BackgroundCont
   if (background.type === 'gradient' || isGradientValue) {
     return (
       <div 
-        key={slideKey}
-        className="absolute inset-0 animate-bg-crossfade" 
+        className="absolute inset-0" 
         style={{ background: value }} 
       />
     );
   }
 
-  // Default: solid color
   return (
     <div 
-      key={slideKey}
-      className="absolute inset-0 animate-bg-crossfade" 
+      className="absolute inset-0" 
       style={{ backgroundColor: value }} 
     />
   );
 }
 
-function PresentBlock({ block }: { block: Block }) {
+function PresentBlock({ block, shouldAnimate = true }: { block: Block; shouldAnimate?: boolean }) {
   const animation =
     (block.animation_settings || { type: 'slide-up', delay: 0, duration: 500 }) as unknown as AnimationSettings;
   const layout = (block.layout_settings || { alignment: 'center', width: '100%', layout: 'contained' }) as unknown as LayoutSettings;
 
-  // Check if this is an edge/full-width image that should be rendered separately
-  const isEdgeImage = block.type === 'image' && 
-    (layout.layout === 'edge-left' || layout.layout === 'edge-right' || layout.layout === 'full-width');
-
   const getAnimationClass = () => {
+    if (!shouldAnimate) return '';
+    
     switch (animation.type) {
       case 'none':
         return '';
@@ -427,10 +570,9 @@ function PresentBlock({ block }: { block: Block }) {
       case 'scale':
         return 'animate-fade-scale-in';
       case 'ken-burns':
-        // Ken Burns only makes sense for images
         return block.type === 'image' ? 'animate-ken-burns' : 'animate-fade-scale-in';
       default:
-        return '';
+        return 'animate-slide-in-up'; // Default to slide-up
     }
   };
 
@@ -454,8 +596,8 @@ function PresentBlock({ block }: { block: Block }) {
       )}
       style={{
         zIndex: block.z_index + 10,
-        animationDelay: `${animation.delay}ms`,
-        animationDuration: `${animation.duration}ms`,
+        animationDelay: shouldAnimate ? `${animation.delay}ms` : undefined,
+        animationDuration: shouldAnimate ? `${animation.duration}ms` : undefined,
       }}
     >
       <BlockContent block={block} layout={layout} />

@@ -22,6 +22,7 @@ export type Database = {
           id: string
           is_waypoint: boolean
           layout_settings: Json | null
+          navigation_mode: string
           position: number
           presentation_id: string
           type: string
@@ -36,6 +37,7 @@ export type Database = {
           id?: string
           is_waypoint?: boolean
           layout_settings?: Json | null
+          navigation_mode?: string
           position?: number
           presentation_id: string
           type?: string
@@ -50,6 +52,7 @@ export type Database = {
           id?: string
           is_waypoint?: boolean
           layout_settings?: Json | null
+          navigation_mode?: string
           position?: number
           presentation_id?: string
           type?: string
