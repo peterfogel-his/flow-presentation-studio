@@ -342,7 +342,8 @@ export default function Present() {
                       <PresentBlock 
                         key={block.id} 
                         block={block} 
-                        shouldAnimate={!isTransitioning}
+                        isWaveTransition={isTransitioning}
+                        staggerIndex={index}
                       />
                     ))
                 )}
@@ -548,13 +549,26 @@ function SlideBackground({ background }: { background?: BackgroundContent }) {
   );
 }
 
-function PresentBlock({ block, shouldAnimate = true }: { block: Block; shouldAnimate?: boolean }) {
+function PresentBlock({ 
+  block, 
+  isWaveTransition = false,
+  staggerIndex = 0 
+}: { 
+  block: Block; 
+  isWaveTransition?: boolean;
+  staggerIndex?: number;
+}) {
   const animation =
     (block.animation_settings || { type: 'slide-up', delay: 0, duration: 500 }) as unknown as AnimationSettings;
   const layout = (block.layout_settings || { alignment: 'center', width: '100%', layout: 'contained' }) as unknown as LayoutSettings;
 
+  // During wave transition: use synced animation with slight stagger
+  // After wave: use block's own animation settings
   const getAnimationClass = () => {
-    if (!shouldAnimate) return '';
+    if (isWaveTransition) {
+      // Synced animation during wave - content slides up together with wave
+      return 'animate-content-reveal';
+    }
     
     switch (animation.type) {
       case 'none':
@@ -572,7 +586,7 @@ function PresentBlock({ block, shouldAnimate = true }: { block: Block; shouldAni
       case 'ken-burns':
         return block.type === 'image' ? 'animate-ken-burns' : 'animate-fade-scale-in';
       default:
-        return 'animate-slide-in-up'; // Default to slide-up
+        return 'animate-slide-in-up';
     }
   };
 
@@ -587,6 +601,22 @@ function PresentBlock({ block, shouldAnimate = true }: { block: Block; shouldAni
     }
   };
 
+  // Calculate delay: during wave, stagger slightly for elegance
+  // Wave duration is 1.2s, content should start around 0.2s into wave and complete by 1.4s
+  const getDelay = () => {
+    if (isWaveTransition) {
+      return 200 + (staggerIndex * 80); // Start 200ms in, 80ms stagger between items
+    }
+    return animation.delay;
+  };
+
+  const getDuration = () => {
+    if (isWaveTransition) {
+      return 1000; // 1s for content during wave (slightly longer than wave for elegance)
+    }
+    return animation.duration;
+  };
+
   return (
     <div
       className={cn(
@@ -596,8 +626,8 @@ function PresentBlock({ block, shouldAnimate = true }: { block: Block; shouldAni
       )}
       style={{
         zIndex: block.z_index + 10,
-        animationDelay: shouldAnimate ? `${animation.delay}ms` : undefined,
-        animationDuration: shouldAnimate ? `${animation.duration}ms` : undefined,
+        animationDelay: `${getDelay()}ms`,
+        animationDuration: `${getDuration()}ms`,
       }}
     >
       <BlockContent block={block} layout={layout} />
