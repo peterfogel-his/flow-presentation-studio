@@ -196,7 +196,7 @@ export default function Present() {
       ref={containerRef}
       className="h-screen bg-background relative overflow-hidden"
     >
-      <SlideBackground background={currentSlide.background} />
+      <SlideBackground background={currentSlide.background} slideKey={currentSlide.waypoint.blockId} />
 
       {/* Controls */}
       <div className="fixed top-4 right-4 z-50 flex gap-2">
@@ -239,18 +239,28 @@ export default function Present() {
         </div>
       )}
 
+      {/* Edge images (rendered outside centered container) */}
+      <EdgeImages blocks={currentSlide.blocks} slideKey={currentSlide.waypoint.blockId} />
+
       {/* Content (one slide = all blocks between two waypoints) */}
       <div className="relative z-10 h-full w-full">
         <div className="h-full w-full overflow-hidden">
           <div
             key={currentSlide.waypoint.blockId}
-            className="h-full w-full flex items-center justify-center px-6 md:px-12"
+            className="h-full w-full flex items-center justify-center px-6 md:px-12 animate-slide-in-up-slow"
           >
             <div className="w-full max-w-5xl space-y-10">
               {currentSlide.blocks.length === 0 ? (
                 <div className="text-muted-foreground">(Tomt stopp)</div>
               ) : (
-                currentSlide.blocks.map((block) => <PresentBlock key={block.id} block={block} />)
+                currentSlide.blocks
+                  .filter((block) => {
+                    // Filter out edge images as they're rendered separately
+                    if (block.type !== 'image') return true;
+                    const layout = (block.layout_settings || { alignment: 'center', width: '100%', layout: 'contained' }) as unknown as LayoutSettings;
+                    return layout.layout !== 'edge-left' && layout.layout !== 'edge-right' && layout.layout !== 'full-width';
+                  })
+                  .map((block) => <PresentBlock key={block.id} block={block} />)
               )}
             </div>
           </div>
@@ -274,21 +284,96 @@ export default function Present() {
   );
 }
 
-function SlideBackground({ background }: { background?: BackgroundContent }) {
+// Edge images component for edge-left, edge-right, full-width layouts
+function EdgeImages({ blocks, slideKey }: { blocks: Block[]; slideKey: string }) {
+  const edgeBlocks = blocks.filter((block) => {
+    if (block.type !== 'image') return false;
+    const layout = (block.layout_settings || { alignment: 'center', width: '100%', layout: 'contained' }) as unknown as LayoutSettings;
+    return layout.layout === 'edge-left' || layout.layout === 'edge-right' || layout.layout === 'full-width';
+  });
+
+  if (edgeBlocks.length === 0) return null;
+
+  return (
+    <>
+      {edgeBlocks.map((block) => {
+        const content = block.content as unknown as ImageContent;
+        const layout = (block.layout_settings || { alignment: 'center', width: '100%', layout: 'contained' }) as unknown as LayoutSettings;
+        const animation = (block.animation_settings || { type: 'slide-up' }) as unknown as AnimationSettings;
+        const isKenBurns = animation.type === 'ken-burns';
+
+        if (layout.layout === 'full-width') {
+          return (
+            <div
+              key={`${slideKey}-${block.id}`}
+              className="absolute inset-0 z-[5] animate-slide-in-up-slow"
+              style={{ zIndex: block.z_index + 5 }}
+            >
+              <img
+                src={content.src}
+                alt={content.alt || ''}
+                className={cn('w-full h-full object-cover', isKenBurns && 'animate-ken-burns')}
+              />
+            </div>
+          );
+        }
+
+        if (layout.layout === 'edge-left') {
+          return (
+            <div
+              key={`${slideKey}-${block.id}`}
+              className="absolute left-0 top-0 bottom-0 w-1/2 z-[5] animate-slide-in-left"
+              style={{ zIndex: block.z_index + 5 }}
+            >
+              <img
+                src={content.src}
+                alt={content.alt || ''}
+                className={cn('w-full h-full object-cover', isKenBurns && 'animate-ken-burns')}
+              />
+            </div>
+          );
+        }
+
+        if (layout.layout === 'edge-right') {
+          return (
+            <div
+              key={`${slideKey}-${block.id}`}
+              className="absolute right-0 top-0 bottom-0 w-1/2 z-[5] animate-slide-in-right"
+              style={{ zIndex: block.z_index + 5 }}
+            >
+              <img
+                src={content.src}
+                alt={content.alt || ''}
+                className={cn('w-full h-full object-cover', isKenBurns && 'animate-ken-burns')}
+              />
+            </div>
+          );
+        }
+
+        return null;
+      })}
+    </>
+  );
+}
+
+function SlideBackground({ background, slideKey }: { background?: BackgroundContent; slideKey: string }) {
   if (!background) {
-    return <div className="absolute inset-0 bg-background transition-colors duration-500" />;
+    return <div key={slideKey} className="absolute inset-0 bg-background animate-bg-crossfade" />;
   }
 
-  // If someone saved a plain color into gradient, treat it as a color.
   const value = background.value || '#ffffff';
-  const isProbablyGradient =
-    background.type === 'gradient' &&
-    (value.includes('linear-gradient') || value.includes('radial-gradient') || value.includes('conic-gradient'));
+  
+  // Detect if value is a gradient string
+  const isGradientValue = 
+    value.includes('linear-gradient') || 
+    value.includes('radial-gradient') || 
+    value.includes('conic-gradient');
 
-  if (background.type === 'image') {
+  if (background.type === 'image' && value) {
     return (
       <div
-        className="absolute inset-0 transition-opacity duration-500"
+        key={slideKey}
+        className="absolute inset-0 animate-bg-crossfade animate-ken-burns"
         style={{
           backgroundImage: `url(${value})`,
           backgroundSize: 'cover',
@@ -298,17 +383,34 @@ function SlideBackground({ background }: { background?: BackgroundContent }) {
     );
   }
 
-  if (isProbablyGradient) {
-    return <div className="absolute inset-0 transition-opacity duration-500" style={{ background: value }} />;
+  if (background.type === 'gradient' || isGradientValue) {
+    return (
+      <div 
+        key={slideKey}
+        className="absolute inset-0 animate-bg-crossfade" 
+        style={{ background: value }} 
+      />
+    );
   }
 
-  return <div className="absolute inset-0 transition-colors duration-500" style={{ background: value }} />;
+  // Default: solid color
+  return (
+    <div 
+      key={slideKey}
+      className="absolute inset-0 animate-bg-crossfade" 
+      style={{ backgroundColor: value }} 
+    />
+  );
 }
 
 function PresentBlock({ block }: { block: Block }) {
   const animation =
     (block.animation_settings || { type: 'slide-up', delay: 0, duration: 500 }) as unknown as AnimationSettings;
-  const layout = (block.layout_settings || { alignment: 'center', width: '100%' }) as unknown as LayoutSettings;
+  const layout = (block.layout_settings || { alignment: 'center', width: '100%', layout: 'contained' }) as unknown as LayoutSettings;
+
+  // Check if this is an edge/full-width image that should be rendered separately
+  const isEdgeImage = block.type === 'image' && 
+    (layout.layout === 'edge-left' || layout.layout === 'edge-right' || layout.layout === 'full-width');
 
   const getAnimationClass = () => {
     switch (animation.type) {
@@ -325,8 +427,8 @@ function PresentBlock({ block }: { block: Block }) {
       case 'scale':
         return 'animate-fade-scale-in';
       case 'ken-burns':
-        // Ken burns doesn't make sense on single content blocks; keep it subtle.
-        return 'animate-fade-scale-in';
+        // Ken Burns only makes sense for images
+        return block.type === 'image' ? 'animate-ken-burns' : 'animate-fade-scale-in';
       default:
         return '';
     }
@@ -386,14 +488,17 @@ function BlockContent({ block, layout }: { block: Block; layout: LayoutSettings 
 
     case 'image': {
       const content = block.content as unknown as ImageContent;
+      const animation = (block.animation_settings || { type: 'slide-up' }) as unknown as AnimationSettings;
+      const isKenBurns = animation.type === 'ken-burns';
+      
       return (
         <img
           src={content.src}
           alt={content.alt || ''}
           className={cn(
             'rounded-lg shadow-lg',
-            layout.layout === 'full-width' && 'w-full',
-            layout.layout === 'contained' && 'max-w-2xl mx-auto'
+            layout.layout === 'contained' && 'max-w-2xl mx-auto',
+            isKenBurns && 'animate-ken-burns'
           )}
         />
       );
