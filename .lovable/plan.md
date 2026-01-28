@@ -1,170 +1,254 @@
 
-# Plan: Fixa presentation - Ken Burns, bakgrunder, bildlayouter och övergångar
+# Plan: Scroll-inspirerat flöde med kurvad skarv och Paus-tillstånd
 
-## Sammanfattning av problemen
+## Sammanfattning
 
-Efter analys av koden och databasen har jag identifierat följande brister:
+Byta från diskreta "slide-byten" till ett scroll-liknande flöde inspirerat av Shelly.com, där sektioner glider mjukt in/ut med en visuell "skarv" som böjer sig (konvex → konkav). Dessutom introduceras ett nytt **Paus**-tillstånd för block som möjliggör sekventiella reveals inom ett stopp.
 
-1. **Ken Burns fungerar inte** - Koden faller tillbaka på `animate-fade-scale-in` istället för den faktiska Ken Burns-animationen
-2. **Bakgrundsbilder och gradients visas inte** - Logiken finns men kan ha renderingsproblem
-3. **Bildlayouter (kant-till-kant) implementeras inte** - `edge-left` och `edge-right` hanteras inte i renderingskoden
-4. **Ingen rörelse mellan stopp** - Slides byter innehåll utan visuell övergång
+## Koncept: Tre block-lägen
 
----
+| Läge | Beskrivning | Effekt |
+|------|-------------|--------|
+| **Stopp** | Huvudnavigationspunkt | Skapar en ny "sektion" med full skärm, bakgrund, kurvad skarv |
+| **Paus** | Delvis stopp | Stannar vid detta block inom nuvarande sektion, nästa tryck visar nästa block |
+| **Inget** | Standard | Blocket visas direkt tillsammans med föregående |
 
-## Lösningar
-
-### 1. Ken Burns-effekt för bilder
-
-**Problem**: `getAnimationClass()` returnerar `animate-fade-scale-in` för Ken Burns istället för den korrekta klassen.
-
-**Lösning**:
-- Ändra så att Ken Burns returnerar `animate-ken-burns` för bildblock
-- Ken Burns ska endast appliceras på bilder (inte text/rubriker)
-- Justera CSS så att Ken Burns har längre duration (20s redan i CSS)
+## Visuell illustration: Kurvad skarv
 
 ```text
-Ken Burns-flöde:
-┌─────────────────┐
-│  Bild laddas    │
-├─────────────────┤
-│  Scale 1.0      │ ← Start
-│       ↓         │
-│  Scale 1.1      │ ← Långsam zoom
-│  + translate    │
-└─────────────────┘
-```
-
-### 2. Bakgrunder (gradient och bild)
-
-**Problem**: Bakgrundsblock med `type: 'gradient'` eller `type: 'image'` renderas inte korrekt.
-
-**Nuvarande data i databasen**: Alla bakgrundsblock har `type: 'color'`. Men editorn tillåter gradient/bild-val.
-
-**Lösning i SlideBackground**:
-- Säkerställ att `background.type === 'gradient'` applicerar CSS korrekt
-- För bilder, använd `<img>` eller `background-image` med cover
-- Lägg till fallback för tom value
-
-### 3. Bildlayouter (kant-till-kant)
-
-**Problem**: `layout.layout` med värden `edge-left`/`edge-right` hanteras inte i renderingen.
-
-**Lösning**:
-- Bilder med `edge-left` ska sträcka sig från vänster kant till mitten (50% bredd, absolut positionerad)
-- Bilder med `edge-right` ska sträcka sig från höger kant till mitten
-- `full-width` ska täcka hela bredden utan marginaler
-- Dessa bilder ska renderas separat från det centrerade innehållet
-
-```text
+Nuvarande stopp (scrollar ut uppåt)
 ┌─────────────────────────────────────────────┐
-│  edge-left     │       Innehåll       │     │
-│  ████████████  │  (centrerat text)    │     │
-│  ████████████  │                      │     │
+│                                             │
+│          [Innehåll 1]                       │
+│                                             │
+│                                             │
 └─────────────────────────────────────────────┘
-
+      ╲                                    ╱
+        ╲      Konvex nederkant          ╱
+          ╲                            ╱
+           ────────────────────────────
+          ╱                            ╲
+        ╱      Konkav överkant           ╲
+      ╱                                    ╲
 ┌─────────────────────────────────────────────┐
-│     │       Innehåll       │   edge-right   │
-│     │  (centrerat text)    │  ████████████  │
-│     │                      │  ████████████  │
+│                                             │
+│          [Innehåll 2]                       │
+│                                             │
+│                                             │
 └─────────────────────────────────────────────┘
+Nästa stopp (scrollar in underifrån)
 ```
 
-### 4. Övergångar mellan stopp (slides)
+Under transition rör sig båda sektioner:
+- Utgående sektion: translateY mot negativ (uppåt), med konvex clip-path i nederkant
+- Inkommande sektion: translateY från positiv till 0 (uppåt), med konkav clip-path i överkant
 
-**Problem**: Inget visuellt förlopp när man navigerar. Innehållet poppar bara in.
+## Teknisk lösning
 
-**Lösning - Slide Transition**:
-- Lägg till en wrapper-komponent som animerar hela slide-innehållet
-- Använd CSS transitions eller framer-motion-liknande logik
-- Alternativ för övergångstyp: fade, slide horisontellt, slide vertikalt
+### 1. Databasändring: Nytt fält `navigation_mode`
 
-**Föreslagen implementation**:
-- Använd `key={currentWaypointIndex}` för att trigga re-mount och animation
-- Varje ny slide animeras in med slide-up + fade
-- Bakgrunden crossfadar mjukt (already has `transition-colors duration-500`)
-
-```text
-Navigationsflöde:
-┌──────────────────┐    Klick/Pil    ┌──────────────────┐
-│   Slide 1        │ ───────────────▶│   Slide 2        │
-│   opacity: 1     │                 │   opacity: 0→1   │
-│   translateY: 0  │  Fade + Slide   │   translateY:    │
-│                  │                 │   30px → 0       │
-└──────────────────┘                 └──────────────────┘
+Lägg till ett fält på `blocks`-tabellen:
+```sql
+ALTER TABLE public.blocks 
+ADD COLUMN navigation_mode TEXT NOT NULL DEFAULT 'none' 
+CHECK (navigation_mode IN ('stop', 'pause', 'none'));
 ```
 
----
+Migration för befintliga waypoints:
+```sql
+UPDATE public.blocks 
+SET navigation_mode = 'stop' 
+WHERE is_waypoint = true;
+```
+
+Behåll `is_waypoint` för bakåtkompatibilitet eller migrera helt till `navigation_mode`.
+
+### 2. Uppdatera Block-typer
+
+**src/types/block.ts:**
+```typescript
+export type NavigationMode = 'stop' | 'pause' | 'none';
+
+export interface Block {
+  // ... existing fields
+  navigation_mode: NavigationMode;
+}
+```
+
+### 3. BlockSettings - Nytt UI för navigationsläge
+
+**src/components/editor/BlockSettings.tsx:**
+
+Ersätt binära "Stopp"-switchen med en Select:
+```typescript
+<Select
+  value={block.navigation_mode || 'none'}
+  onValueChange={(value) => onUpdate({ 
+    navigation_mode: value,
+    is_waypoint: value === 'stop' // backwards compat
+  })}
+>
+  <SelectItem value="none">Inget</SelectItem>
+  <SelectItem value="pause">Paus (delvis stopp)</SelectItem>
+  <SelectItem value="stop">Stopp (full sektion)</SelectItem>
+</Select>
+```
+
+### 4. Presentation: Scroll-liknande övergång med clip-path
+
+**Ny arkitektur i Present.tsx:**
+
+Istället för att bara byta ut innehåll, rendera **två sektioner** samtidigt under övergång:
+- Aktuell sektion (som glider ut)
+- Nästa sektion (som glider in)
+
+**Nyckeldelar:**
+
+```typescript
+// State för transition
+const [isTransitioning, setIsTransitioning] = useState(false);
+const [transitionProgress, setTransitionProgress] = useState(0); // 0 to 1
+const [previousSlideIndex, setPreviousSlideIndex] = useState<number | null>(null);
+
+// Animation med requestAnimationFrame eller CSS transitions
+const startTransition = (newIndex: number) => {
+  setPreviousSlideIndex(currentWaypointIndex);
+  setIsTransitioning(true);
+  setCurrentWaypointIndex(newIndex);
+  
+  // Animera progress 0 → 1 över ~1s
+  // Sedan setIsTransitioning(false)
+};
+```
+
+**CSS för kurvad skarv (clip-path):**
+
+```css
+/* Utgående sektion - konvex nederkant */
+.section-exit {
+  clip-path: ellipse(150% 100% at 50% 0%);
+  /* Animeras till: ellipse(150% 50% at 50% 0%) */
+}
+
+/* Inkommande sektion - konkav överkant */  
+.section-enter {
+  clip-path: ellipse(150% 100% at 50% 100%);
+  /* Startar med: ellipse(150% 50% at 50% 100%) */
+}
+```
+
+### 5. CSS-animationer för skarven
+
+**src/index.css:**
+
+```css
+/* Wave reveal - utgående (uppåt med konvex nederkant) */
+@keyframes wave-exit-up {
+  0% {
+    transform: translateY(0);
+    clip-path: ellipse(150% 100% at 50% 0%);
+  }
+  100% {
+    transform: translateY(-100%);
+    clip-path: ellipse(150% 60% at 50% -20%);
+  }
+}
+
+/* Wave reveal - inkommande (från neder med konkav överkant) */
+@keyframes wave-enter-up {
+  0% {
+    transform: translateY(100%);
+    clip-path: ellipse(150% 60% at 50% 120%);
+  }
+  100% {
+    transform: translateY(0);
+    clip-path: ellipse(150% 100% at 50% 100%);
+  }
+}
+
+.animate-wave-exit {
+  animation: wave-exit-up 1.2s cubic-bezier(0.76, 0, 0.24, 1) forwards;
+}
+
+.animate-wave-enter {
+  animation: wave-enter-up 1.2s cubic-bezier(0.76, 0, 0.24, 1) forwards;
+}
+```
+
+### 6. Paus-logik i presentationen
+
+Paus-block ger ett "steg inom steg":
+
+```typescript
+// Gruppera blocks inom varje slide baserat på pauser
+type SlideStep = {
+  blocks: Block[];
+  pauseIndex: number;
+};
+
+// Varje Slide har flera steps
+type Slide = {
+  waypoint: Waypoint;
+  steps: SlideStep[];
+  background: BackgroundContent;
+};
+
+// Navigation hanterar både slides OCH steps
+const [currentStep, setCurrentStep] = useState(0);
+
+const goNext = () => {
+  if (currentStep < currentSlide.steps.length - 1) {
+    // Nästa steg inom samma slide (mjuk block-reveal)
+    setCurrentStep(s => s + 1);
+  } else {
+    // Nästa slide (wave transition)
+    setCurrentStep(0);
+    setCurrentWaypointIndex(i => i + 1);
+  }
+};
+```
+
+### 7. Standard animation: Glid upp
+
+Säkerställ att alla block utan explicit animation får `slide-up` som standard:
+
+**src/types/block.ts (redan korrekt):**
+```typescript
+export function getAnimationSettings(block: Block): AnimationSettings {
+  return {
+    type: 'slide-up', // ← Standard
+    delay: 0,
+    duration: 500,
+    ...settings,
+  };
+}
+```
 
 ## Filer att ändra
 
 | Fil | Ändring |
 |-----|---------|
-| `src/pages/Present.tsx` | Fixa Ken Burns, bildlayouter, slide-övergångar |
-| `src/index.css` | Eventuella nya animations-keyframes för slide transitions |
+| **Migration (ny)** | Lägg till `navigation_mode` kolumn |
+| `src/types/block.ts` | Lägg till `NavigationMode` typ |
+| `src/components/editor/BlockSettings.tsx` | Ersätt Stopp-switch med Select (Inget/Paus/Stopp) |
+| `src/pages/Present.tsx` | Implementera dual-section rendering, wave clip-path, paus-logik |
+| `src/index.css` | Lägg till wave-enter/wave-exit animationer med clip-path |
 
----
+## Visuellt resultat
 
-## Tekniska detaljer
+1. **Vid navigation mellan Stopp:** Mjuk wave-transition där nuvarande sektion glider upp med konvex kurva i nederkant, medan nästa sektion glider in underifrån med konkav kurva i överkant
+2. **Vid navigation till Paus:** Inga slide-byten, bara nästa block(en) animeras in (slide-up)
+3. **Block utan navigation_mode:** Visas direkt med sitt föregående stopp/paus
 
-### Present.tsx - Huvudändringar
+## Progression
 
-**1. PresentBlock - Ken Burns**
-```typescript
-case 'ken-burns':
-  // Endast för bilder, annars fallback
-  return block.type === 'image' ? 'animate-ken-burns' : 'animate-fade-scale-in';
-```
-
-**2. BlockContent - Bildlayouter**
-Flytta bilder med `edge-left`/`edge-right`/`full-width` utanför den centrerade containern och rendera dem som absolut positionerade element.
-
-**3. Slide-övergång**
-Wrappa slide-innehållet i en div med animation som triggas vid key-change:
-```typescript
-<div 
-  key={currentSlide.waypoint.blockId} 
-  className="animate-slide-in-up"
->
-  {/* slide content */}
-</div>
-```
-
-**4. SlideBackground - Säkerställ rendering**
-- Gradient: `style={{ background: value }}`
-- Bild: `style={{ backgroundImage: url(...), backgroundSize: 'cover' }}`
-- Lägg till Ken Burns på bakgrundsbilder om önskat
-
-### CSS - Nya/justerade animationer
-
-Längre duration för slide-övergångar (elegant känsla enligt design-specs):
-```css
-@keyframes slide-in-up-slow {
-  from {
-    opacity: 0;
-    transform: translateY(40px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.animate-slide-in-up-slow {
-  animation: slide-in-up-slow 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-}
+```text
+Tryck 1: Stopp 1 visas (alla block till första Paus eller nästa Stopp)
+Tryck 2: Paus-blocket animeras in
+Tryck 3: Wave-transition till Stopp 2
+...
 ```
 
 ---
 
-## Diskussionspunkt: Förlopp och rörelser
-
-Du nämnde "förlopp apple" - vill du ha en specifik typ av övergång?
-
-**Alternativ:**
-1. **Fade + Slide upp** (nuvarande plan) - Nytt innehåll glider upp och tonar in
-2. **Horisontell slide** - Som ett traditionellt slidedeck (vänster/höger)
-3. **Crossfade** - Rent tona mellan slides
-4. **Parallax/Depth** - Olika lager rör sig olika snabbt (kopplat till z-index)
-
-Jag rekommenderar att börja med **Fade + Slide upp** med 1.2s duration som standard, sedan kan vi finjustera eller lägga till parallax-effekter.
+Detta ger en organisk, scroll-liknande upplevelse istället för diskreta slide-byten, med den kurvade skarven som du beskrev från Shelly.com.
