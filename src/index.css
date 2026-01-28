@@ -304,6 +304,22 @@
   animation: wave-enter-down 1.2s cubic-bezier(0.76, 0, 0.24, 1) forwards;
 }
 
+/* Content reveal - synced with wave transition */
+@keyframes content-reveal {
+  0% {
+    opacity: 0;
+    transform: translateY(60px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-content-reveal {
+  animation: content-reveal 1s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
 /* Presentation mode fullscreen styling */
 .presentation-mode {
   @apply fixed inset-0 z-50 bg-background;
