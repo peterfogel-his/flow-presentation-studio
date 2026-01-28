@@ -31,6 +31,13 @@ type Slide = {
   background?: BackgroundContent;
 };
 
+// Helper to compare backgrounds
+function isSameBackground(a?: BackgroundContent, b?: BackgroundContent): boolean {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  return a.type === b.type && a.value === b.value;
+}
+
 export default function Present() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -338,13 +345,25 @@ export default function Present() {
     );
   }
 
+  // Check if backgrounds are the same between current and previous slide
+  const sameBackground = previousSlide 
+    ? isSameBackground(previousSlide.background, currentSlide.background)
+    : false;
+
   return (
     <div
       ref={containerRef}
       className="h-screen bg-background relative overflow-hidden"
     >
-      {/* Previous slide (exits during transition) */}
-      {isTransitioning && previousSlide && (
+      {/* Persistent background layer - stays in place if backgrounds match */}
+      {isTransitioning && sameBackground && (
+        <div className="absolute inset-0 z-5">
+          <SlideBackground background={currentSlide.background} enableKenBurns />
+        </div>
+      )}
+
+      {/* Previous slide (exits during transition) - only if different background */}
+      {isTransitioning && previousSlide && !sameBackground && (
         <div 
           className={cn(
             "absolute inset-0 z-20",
@@ -352,16 +371,30 @@ export default function Present() {
           )}
         >
           <SlideBackground background={previousSlide.background} />
+        </div>
+      )}
+      
+      {/* Previous slide CONTENT (exits during transition) */}
+      {isTransitioning && previousSlide && (
+        <div 
+          className={cn(
+            "absolute inset-0 z-20",
+            transitionDirection === 'forward' ? 'animate-wave-exit-up' : 'animate-wave-exit-down'
+          )}
+        >
+          {/* Transparent background for content layer when backgrounds match */}
+          {sameBackground && <div className="absolute inset-0" />}
           <EdgeImages 
             blocks={previousSlide.steps.flatMap(s => s.blocks)} 
-            slideKey={previousSlide.waypoint.blockId} 
+            slideKey={previousSlide.waypoint.blockId}
+            isExiting
           />
           <div className="relative z-10 h-full w-full">
             <div className="h-full w-full flex items-center justify-center px-6 md:px-12">
               <div className="w-full max-w-5xl space-y-10">
                 {previousSlide.steps.flatMap(s => s.blocks)
                   .filter(filterNonEdgeBlocks)
-                  .map((block) => <PresentBlock key={block.id} block={block} />)}
+                  .map((block) => <PresentBlock key={block.id} block={block} isStatic />)}
               </div>
             </div>
           </div>
@@ -372,17 +405,24 @@ export default function Present() {
       <div 
         className={cn(
           "absolute inset-0",
-          isTransitioning 
+          isTransitioning && !sameBackground
             ? transitionDirection === 'forward' 
               ? 'animate-wave-enter-up z-10' 
               : 'animate-wave-enter-down z-10'
             : 'z-10'
         )}
       >
-        <SlideBackground background={currentSlide.background} />
+        {/* Background - only animate if different from previous */}
+        {(!isTransitioning || !sameBackground) && (
+          <SlideBackground background={currentSlide.background} />
+        )}
 
         {/* Edge images */}
-        <EdgeImages blocks={visibleBlocks} slideKey={currentSlide.waypoint.blockId} />
+        <EdgeImages 
+          blocks={visibleBlocks} 
+          slideKey={currentSlide.waypoint.blockId}
+          isEntering={isTransitioning}
+        />
 
         {/* Content */}
         <div className="relative z-10 h-full w-full">
@@ -492,7 +532,17 @@ function filterNonEdgeBlocks(block: Block): boolean {
 }
 
 // Edge images component
-function EdgeImages({ blocks, slideKey }: { blocks: Block[]; slideKey: string }) {
+function EdgeImages({ 
+  blocks, 
+  slideKey,
+  isExiting = false,
+  isEntering = false 
+}: { 
+  blocks: Block[]; 
+  slideKey: string;
+  isExiting?: boolean;
+  isEntering?: boolean;
+}) {
   const edgeBlocks = blocks.filter((block) => {
     if (block.type !== 'image') return false;
     const layout = (block.layout_settings || { alignment: 'center', width: '100%', layout: 'contained' }) as unknown as LayoutSettings;
@@ -509,12 +559,23 @@ function EdgeImages({ blocks, slideKey }: { blocks: Block[]; slideKey: string })
         const animation = (block.animation_settings || { type: 'slide-up' }) as unknown as AnimationSettings;
         const isKenBurns = animation.type === 'ken-burns';
 
+        // No animation when exiting - already handled by parent
+        const getAnimationClass = () => {
+          if (isExiting) return '';
+          if (isEntering) return 'animate-content-reveal';
+          return '';
+        };
+
         if (layout.layout === 'full-width') {
           return (
             <div
               key={`${slideKey}-${block.id}`}
-              className="absolute inset-0 z-[5] animate-slide-in-up-slow"
-              style={{ zIndex: block.z_index + 5 }}
+              className={cn("absolute inset-0 z-[5]", getAnimationClass())}
+              style={{ 
+                zIndex: block.z_index + 5,
+                animationDelay: isEntering ? '150ms' : undefined,
+                animationDuration: isEntering ? '1100ms' : undefined,
+              }}
             >
               <img
                 src={content.src}
@@ -529,8 +590,12 @@ function EdgeImages({ blocks, slideKey }: { blocks: Block[]; slideKey: string })
           return (
             <div
               key={`${slideKey}-${block.id}`}
-              className="absolute left-0 top-0 bottom-0 w-1/2 z-[5] animate-slide-in-left"
-              style={{ zIndex: block.z_index + 5 }}
+              className={cn("absolute left-0 top-0 bottom-0 w-1/2 z-[5]", getAnimationClass())}
+              style={{ 
+                zIndex: block.z_index + 5,
+                animationDelay: isEntering ? '150ms' : undefined,
+                animationDuration: isEntering ? '1100ms' : undefined,
+              }}
             >
               <img
                 src={content.src}
@@ -545,8 +610,12 @@ function EdgeImages({ blocks, slideKey }: { blocks: Block[]; slideKey: string })
           return (
             <div
               key={`${slideKey}-${block.id}`}
-              className="absolute right-0 top-0 bottom-0 w-1/2 z-[5] animate-slide-in-right"
-              style={{ zIndex: block.z_index + 5 }}
+              className={cn("absolute right-0 top-0 bottom-0 w-1/2 z-[5]", getAnimationClass())}
+              style={{ 
+                zIndex: block.z_index + 5,
+                animationDelay: isEntering ? '150ms' : undefined,
+                animationDuration: isEntering ? '1100ms' : undefined,
+              }}
             >
               <img
                 src={content.src}
@@ -563,7 +632,13 @@ function EdgeImages({ blocks, slideKey }: { blocks: Block[]; slideKey: string })
   );
 }
 
-function SlideBackground({ background }: { background?: BackgroundContent }) {
+function SlideBackground({ 
+  background,
+  enableKenBurns = false 
+}: { 
+  background?: BackgroundContent;
+  enableKenBurns?: boolean;
+}) {
   if (!background) {
     return <div className="absolute inset-0 bg-background" />;
   }
@@ -591,7 +666,7 @@ function SlideBackground({ background }: { background?: BackgroundContent }) {
   if (background.type === 'gradient' || isGradientValue) {
     return (
       <div 
-        className="absolute inset-0" 
+        className={cn("absolute inset-0", enableKenBurns && "animate-ken-burns")}
         style={{ background: value }} 
       />
     );
@@ -599,7 +674,7 @@ function SlideBackground({ background }: { background?: BackgroundContent }) {
 
   return (
     <div 
-      className="absolute inset-0" 
+      className={cn("absolute inset-0", enableKenBurns && "animate-ken-burns")}
       style={{ backgroundColor: value }} 
     />
   );
@@ -608,24 +683,15 @@ function SlideBackground({ background }: { background?: BackgroundContent }) {
 function PresentBlock({ 
   block, 
   isWaveTransition = false,
-  staggerIndex = 0 
+  staggerIndex = 0,
+  isStatic = false 
 }: { 
   block: Block; 
   isWaveTransition?: boolean;
   staggerIndex?: number;
+  isStatic?: boolean;
 }) {
-  // Capture initial transition state at mount - don't re-animate when it changes
-  const initialWaveTransition = useRef(isWaveTransition);
-  
-  const animation =
-    (block.animation_settings || { type: 'slide-up', delay: 0, duration: 500 }) as unknown as AnimationSettings;
   const layout = (block.layout_settings || { alignment: 'center', width: '100%', layout: 'contained' }) as unknown as LayoutSettings;
-
-  // Always use the initial state for animation class
-  const getAnimationClass = () => {
-    // Always use content-reveal for synced animation with wave
-    return 'animate-content-reveal';
-  };
 
   const getAlignmentClass = () => {
     switch (layout.alignment) {
@@ -638,26 +704,22 @@ function PresentBlock({
     }
   };
 
-  // Staggered delay for elegant reveal
-  const getDelay = () => {
-    return 150 + (staggerIndex * 100); // Start 150ms in, 100ms stagger
-  };
-
-  const getDuration = () => {
-    return 1100; // Slightly longer than wave for elegance
-  };
+  // Only animate when it's an active wave transition for entering content
+  const shouldAnimate = isWaveTransition && !isStatic;
 
   return (
     <div
       className={cn(
         'relative flex flex-col justify-center',
         getAlignmentClass(),
-        getAnimationClass()
+        shouldAnimate && 'animate-content-reveal'
       )}
       style={{
         zIndex: block.z_index + 10,
-        animationDelay: `${getDelay()}ms`,
-        animationDuration: `${getDuration()}ms`,
+        ...(shouldAnimate && {
+          animationDelay: `${150 + (staggerIndex * 100)}ms`,
+          animationDuration: '1100ms',
+        }),
       }}
     >
       <BlockContent block={block} layout={layout} />
