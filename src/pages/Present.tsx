@@ -46,6 +46,8 @@ export default function Present() {
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [transitionDirection, setTransitionDirection] = useState<'forward' | 'backward'>('forward');
   const [previousSlideIndex, setPreviousSlideIndex] = useState<number | null>(null);
+  // Animation key to prevent re-animation when transition ends
+  const [slideAnimationKey, setSlideAnimationKey] = useState(0);
 
   // Fetch blocks
   useEffect(() => {
@@ -70,20 +72,20 @@ export default function Present() {
   }, [id]);
 
   // Build slides with steps (pause support)
+  // NEW LOGIC: "Stopp" marks END of a section, not beginning
+  // Sections are: [start...stopp1], [after stopp1...stopp2], etc.
   const slides: Slide[] = useMemo(() => {
     if (blocks.length === 0) return [];
 
     const sorted = [...blocks].sort((a, b) => a.position - b.position);
     
-    // Find all stops (blocks with navigation_mode === 'stop' or is_waypoint for backwards compat)
-    const stopBlocks = sorted.filter(b => 
-      b.navigation_mode === 'stop' || (b.is_waypoint && !b.navigation_mode)
-    );
-    
-    // If no stops, create one from the first block
-    if (stopBlocks.length === 0 && sorted.length > 0) {
-      stopBlocks.push(sorted[0]);
-    }
+    // Find positions of all stop blocks
+    const stopPositions: number[] = [];
+    sorted.forEach((b, idx) => {
+      if (b.navigation_mode === 'stop' || (b.is_waypoint && !b.navigation_mode)) {
+        stopPositions.push(idx);
+      }
+    });
 
     const getLastBackgroundUpTo = (pos: number): BackgroundContent | undefined => {
       const bg = sorted
@@ -92,25 +94,28 @@ export default function Present() {
       return bg ? (bg.content as unknown as BackgroundContent) : undefined;
     };
 
-    return stopBlocks.map((stopBlock, idx) => {
-      const start = stopBlock.position;
-      const end = idx < stopBlocks.length - 1 
-        ? stopBlocks[idx + 1].position - 1 
-        : sorted[sorted.length - 1].position;
-      
-      // Get all content blocks between this stop and the next
-      const sectionBlocks = sorted.filter(
-        (b) => b.position >= start && b.position <= end && b.type !== 'background'
-      );
+    // Build slides based on stop positions
+    // Each slide goes from (previous stop + 1) to (current stop) inclusive
+    const slideList: Slide[] = [];
+    let startIdx = 0;
 
+    // If no stops, treat entire presentation as one slide
+    if (stopPositions.length === 0) {
+      stopPositions.push(sorted.length - 1);
+    }
+
+    stopPositions.forEach((stopIdx, i) => {
+      const sectionBlocks = sorted.slice(startIdx, stopIdx + 1).filter(b => b.type !== 'background');
+      const firstBlock = sorted[startIdx];
+      
       // Group blocks into steps based on pauses
       const steps: SlideStep[] = [];
       let currentStepBlocks: Block[] = [];
       let pauseIndex = 0;
 
-      sectionBlocks.forEach((block, i) => {
-        // If this block is a pause, start a new step
-        if (block.navigation_mode === 'pause' && i > 0) {
+      sectionBlocks.forEach((block, blockIdx) => {
+        // If this block is a pause (and not first block), start a new step
+        if (block.navigation_mode === 'pause' && blockIdx > 0) {
           if (currentStepBlocks.length > 0) {
             steps.push({ blocks: currentStepBlocks, pauseIndex });
             pauseIndex++;
@@ -131,18 +136,67 @@ export default function Present() {
         steps.push({ blocks: [], pauseIndex: 0 });
       }
 
-      return {
+      // Find the stop block for title (last block in section with stop mode)
+      const stopBlock = sorted[stopIdx];
+
+      slideList.push({
         waypoint: {
-          blockId: stopBlock.id,
-          title: stopBlock.waypoint_title || `Stopp ${idx + 1}`,
-          position: stopBlock.position,
+          blockId: firstBlock?.id || `slide-${i}`,
+          title: stopBlock.waypoint_title || `Sektion ${i + 1}`,
+          position: firstBlock?.position || 0,
         },
-        startPosition: start,
-        endPosition: end,
+        startPosition: sorted[startIdx]?.position || 0,
+        endPosition: sorted[stopIdx]?.position || 0,
         steps,
-        background: getLastBackgroundUpTo(start),
-      };
+        background: getLastBackgroundUpTo(sorted[startIdx]?.position || 0),
+      });
+
+      startIdx = stopIdx + 1;
     });
+
+    // Handle remaining blocks after last stop (if any)
+    if (startIdx < sorted.length) {
+      const sectionBlocks = sorted.slice(startIdx).filter(b => b.type !== 'background');
+      const firstBlock = sorted[startIdx];
+      
+      const steps: SlideStep[] = [];
+      let currentStepBlocks: Block[] = [];
+      let pauseIndex = 0;
+
+      sectionBlocks.forEach((block, blockIdx) => {
+        if (block.navigation_mode === 'pause' && blockIdx > 0) {
+          if (currentStepBlocks.length > 0) {
+            steps.push({ blocks: currentStepBlocks, pauseIndex });
+            pauseIndex++;
+          }
+          currentStepBlocks = [block];
+        } else {
+          currentStepBlocks.push(block);
+        }
+      });
+
+      if (currentStepBlocks.length > 0) {
+        steps.push({ blocks: currentStepBlocks, pauseIndex });
+      }
+
+      if (steps.length === 0) {
+        steps.push({ blocks: [], pauseIndex: 0 });
+      }
+
+      slideList.push({
+        waypoint: {
+          blockId: firstBlock?.id || `slide-last`,
+          title: `Sektion ${slideList.length + 1}`,
+          position: firstBlock?.position || 0,
+        },
+        startPosition: sorted[startIdx]?.position || 0,
+        endPosition: sorted[sorted.length - 1]?.position || 0,
+        steps,
+        background: getLastBackgroundUpTo(sorted[startIdx]?.position || 0),
+      });
+    }
+
+    return slideList;
   }, [blocks]);
 
   // Navigation functions
@@ -184,13 +238,15 @@ export default function Present() {
     setTransitionDirection(direction);
     setIsTransitioning(true);
     setCurrentSlideIndex(newIndex);
-    setCurrentStepIndex(0); // Reset step index for new slide
+    setCurrentStepIndex(0);
+    // Increment animation key to prevent re-animation when transition ends
+    setSlideAnimationKey(k => k + 1);
 
     // End transition after animation completes
     setTimeout(() => {
       setIsTransitioning(false);
       setPreviousSlideIndex(null);
-    }, 1200); // Match animation duration
+    }, 1200);
   };
 
   // Keyboard navigation
@@ -340,7 +396,7 @@ export default function Present() {
                     .filter(filterNonEdgeBlocks)
                     .map((block, index) => (
                       <PresentBlock 
-                        key={block.id} 
+                        key={`${slideAnimationKey}-${block.id}`} 
                         block={block} 
                         isWaveTransition={isTransitioning}
                         staggerIndex={index}
@@ -558,36 +614,17 @@ function PresentBlock({
   isWaveTransition?: boolean;
   staggerIndex?: number;
 }) {
+  // Capture initial transition state at mount - don't re-animate when it changes
+  const initialWaveTransition = useRef(isWaveTransition);
+  
   const animation =
     (block.animation_settings || { type: 'slide-up', delay: 0, duration: 500 }) as unknown as AnimationSettings;
   const layout = (block.layout_settings || { alignment: 'center', width: '100%', layout: 'contained' }) as unknown as LayoutSettings;
 
-  // During wave transition: use synced animation with slight stagger
-  // After wave: use block's own animation settings
+  // Always use the initial state for animation class
   const getAnimationClass = () => {
-    if (isWaveTransition) {
-      // Synced animation during wave - content slides up together with wave
-      return 'animate-content-reveal';
-    }
-    
-    switch (animation.type) {
-      case 'none':
-        return '';
-      case 'fade':
-        return 'animate-fade-scale-in';
-      case 'slide-left':
-        return 'animate-slide-in-left';
-      case 'slide-right':
-        return 'animate-slide-in-right';
-      case 'slide-up':
-        return 'animate-slide-in-up';
-      case 'scale':
-        return 'animate-fade-scale-in';
-      case 'ken-burns':
-        return block.type === 'image' ? 'animate-ken-burns' : 'animate-fade-scale-in';
-      default:
-        return 'animate-slide-in-up';
-    }
+    // Always use content-reveal for synced animation with wave
+    return 'animate-content-reveal';
   };
 
   const getAlignmentClass = () => {
@@ -601,20 +638,13 @@ function PresentBlock({
     }
   };
 
-  // Calculate delay: during wave, stagger slightly for elegance
-  // Wave duration is 1.2s, content should start around 0.2s into wave and complete by 1.4s
+  // Staggered delay for elegant reveal
   const getDelay = () => {
-    if (isWaveTransition) {
-      return 200 + (staggerIndex * 80); // Start 200ms in, 80ms stagger between items
-    }
-    return animation.delay;
+    return 150 + (staggerIndex * 100); // Start 150ms in, 100ms stagger
   };
 
   const getDuration = () => {
-    if (isWaveTransition) {
-      return 1000; // 1s for content during wave (slightly longer than wave for elegance)
-    }
-    return animation.duration;
+    return 1100; // Slightly longer than wave for elegance
   };
 
   return (
