@@ -62,25 +62,39 @@ export function BlockSettings({ block, onUpdate }: BlockSettingsProps) {
       </div>
 
       <div className="p-4 space-y-6">
-        {/* Waypoint settings */}
+        {/* Navigation mode settings */}
         <section className="space-y-3">
           <div className="flex items-center gap-2 text-sm font-medium">
             <MapPin className="h-4 w-4" />
-            Stopp (Waypoint)
+            Navigationsläge
           </div>
 
-          <div className="flex items-center justify-between">
-            <Label htmlFor="is-waypoint" className="text-sm">
-              Markera som stopp
-            </Label>
-            <Switch
-              id="is-waypoint"
-              checked={block.is_waypoint}
-              onCheckedChange={(checked) => onUpdate({ is_waypoint: checked })}
-            />
+          <div className="space-y-2">
+            <Label className="text-sm">Läge</Label>
+            <Select
+              value={block.navigation_mode || 'none'}
+              onValueChange={(value) => onUpdate({ 
+                navigation_mode: value as 'stop' | 'pause' | 'none',
+                is_waypoint: value === 'stop' // backwards compat
+              })}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">Inget (visas direkt)</SelectItem>
+                <SelectItem value="pause">Paus (delvis stopp)</SelectItem>
+                <SelectItem value="stop">Stopp (ny sektion)</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              {block.navigation_mode === 'stop' && 'Skapar en ny sektion med wave-transition'}
+              {block.navigation_mode === 'pause' && 'Nästa tryck visar detta block'}
+              {(!block.navigation_mode || block.navigation_mode === 'none') && 'Visas tillsammans med föregående'}
+            </p>
           </div>
 
-          {block.is_waypoint && (
+          {block.navigation_mode === 'stop' && (
             <div className="space-y-2">
               <Label htmlFor="waypoint-title" className="text-sm">
                 Stopp-titel

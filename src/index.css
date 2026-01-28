@@ -240,6 +240,70 @@
   animation: bg-crossfade 0.8s ease-out forwards;
 }
 
+/* Wave reveal - utgående sektion (glider uppåt med konvex nederkant) */
+@keyframes wave-exit-up {
+  0% {
+    transform: translateY(0);
+    clip-path: ellipse(200% 100% at 50% 0%);
+  }
+  100% {
+    transform: translateY(-100%);
+    clip-path: ellipse(200% 55% at 50% -10%);
+  }
+}
+
+/* Wave reveal - inkommande sektion (glider upp med konkav överkant) */
+@keyframes wave-enter-up {
+  0% {
+    transform: translateY(100%);
+    clip-path: ellipse(200% 55% at 50% 110%);
+  }
+  100% {
+    transform: translateY(0);
+    clip-path: ellipse(200% 100% at 50% 100%);
+  }
+}
+
+/* Wave reveal bakåt - utgående sektion (glider nedåt med konkav överkant) */
+@keyframes wave-exit-down {
+  0% {
+    transform: translateY(0);
+    clip-path: ellipse(200% 100% at 50% 100%);
+  }
+  100% {
+    transform: translateY(100%);
+    clip-path: ellipse(200% 55% at 50% 110%);
+  }
+}
+
+/* Wave reveal bakåt - inkommande sektion (glider ned med konvex nederkant) */
+@keyframes wave-enter-down {
+  0% {
+    transform: translateY(-100%);
+    clip-path: ellipse(200% 55% at 50% -10%);
+  }
+  100% {
+    transform: translateY(0);
+    clip-path: ellipse(200% 100% at 50% 0%);
+  }
+}
+
+.animate-wave-exit-up {
+  animation: wave-exit-up 1.2s cubic-bezier(0.76, 0, 0.24, 1) forwards;
+}
+
+.animate-wave-enter-up {
+  animation: wave-enter-up 1.2s cubic-bezier(0.76, 0, 0.24, 1) forwards;
+}
+
+.animate-wave-exit-down {
+  animation: wave-exit-down 1.2s cubic-bezier(0.76, 0, 0.24, 1) forwards;
+}
+
+.animate-wave-enter-down {
+  animation: wave-enter-down 1.2s cubic-bezier(0.76, 0, 0.24, 1) forwards;
+}
+
 /* Presentation mode fullscreen styling */
 .presentation-mode {
   @apply fixed inset-0 z-50 bg-background;

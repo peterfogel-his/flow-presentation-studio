@@ -3,6 +3,9 @@ import type { Json } from '@/integrations/supabase/types';
 // Block types
 export type BlockType = 'background' | 'heading' | 'text' | 'image' | 'list';
 
+// Navigation mode for blocks
+export type NavigationMode = 'stop' | 'pause' | 'none';
+
 // Content types for each block
 export interface BackgroundContent {
   type: 'color' | 'gradient' | 'image';
@@ -62,6 +65,7 @@ export interface Block {
   is_waypoint: boolean;
   waypoint_title: string | null;
   z_index: number;
+  navigation_mode: NavigationMode;
   created_at: string;
   updated_at: string;
 }
