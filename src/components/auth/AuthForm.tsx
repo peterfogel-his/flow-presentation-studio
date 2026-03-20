@@ -142,6 +142,13 @@ export function AuthForm() {
                   {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                   Logga in
                 </Button>
+                <button
+                  type="button"
+                  className="w-full text-sm text-muted-foreground hover:text-foreground transition-colors"
+                  onClick={() => setResetMode(true)}
+                >
+                  Glömt lösenord?
+                </button>
               </form>
             </TabsContent>
             
