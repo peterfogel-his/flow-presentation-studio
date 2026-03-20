@@ -12,6 +12,24 @@ import { Loader2, Presentation } from 'lucide-react';
 export function AuthForm() {
   const { signIn, signUp } = useAuth();
   const [loading, setLoading] = useState(false);
+  const [resetMode, setResetMode] = useState(false);
+  const [resetEmail, setResetEmail] = useState('');
+  const [resetLoading, setResetLoading] = useState(false);
+
+  const handlePasswordReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setResetLoading(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(resetEmail, {
+      redirectTo: `${window.location.origin}/reset-password`,
+    });
+    if (error) {
+      toast.error(error.message);
+    } else {
+      toast.success('Återställningslänk skickad! Kolla din e-post.');
+      setResetMode(false);
+    }
+    setResetLoading(false);
+  };
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>, mode: 'signin' | 'signup') => {
     e.preventDefault();
