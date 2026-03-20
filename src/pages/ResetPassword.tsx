@@ -73,7 +73,7 @@ export default function ResetPassword() {
       <div className="min-h-screen flex items-center justify-center bg-background p-4">
         <Card className="w-full max-w-md">
           <CardHeader className="text-center">
-            <CheckCircle className="mx-auto h-12 w-12 text-green-500 mb-4" />
+            <CheckCircle className="mx-auto h-12 w-12 text-primary mb-4" />
             <CardTitle>Lösenord uppdaterat!</CardTitle>
             <CardDescription>Du skickas vidare till startsidan...</CardDescription>
           </CardHeader>
