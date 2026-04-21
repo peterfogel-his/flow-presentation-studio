@@ -9,6 +9,10 @@ import Editor from "./pages/Editor";
 import Present from "./pages/Present";
 import ResetPassword from "./pages/ResetPassword";
 import NotFound from "./pages/NotFound";
+import PortfolioIndex from "./pages/portfolinho/Index";
+import TemplateEditor from "./pages/portfolinho/TemplateEditor";
+import StudentView from "./pages/portfolinho/StudentView";
+import AssessmentView from "./pages/portfolinho/AssessmentView";
 
 const queryClient = new QueryClient();
 
@@ -24,6 +28,10 @@ const App = () => (
             <Route path="/editor/:id" element={<Editor />} />
             <Route path="/present/:id" element={<Present />} />
             <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path="/portfolinho" element={<PortfolioIndex />} />
+            <Route path="/portfolinho/teacher" element={<TemplateEditor />} />
+            <Route path="/portfolinho/student" element={<StudentView />} />
+            <Route path="/portfolinho/assess" element={<AssessmentView />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>
